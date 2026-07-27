@@ -29,8 +29,8 @@ jobs:
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -38,7 +38,7 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run ${{ matrix.command }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: codicon-${{ matrix.artifact }}
           path: ${{ matrix.paths }}
@@ -51,7 +51,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release-assets
       - name: Publish GitHub Release

@@ -87,7 +87,7 @@ npm run dist:mac
 
 Unsigned local builds can be opened manually. For distribution to other people, configure an Apple Developer ID and notarization for macOS. Add maintainer/homepage metadata before introducing a `.deb` target; the default Linux artifact is the portable AppImage.
 
-Pushing a version tag such as `v0.1.0` runs the native Linux and macOS packaging jobs and publishes their outputs to GitHub Releases. The workflow can also be started manually to produce Actions artifacts without creating a release.
+Pushing a version tag such as `v0.1.1` runs the native Linux and macOS packaging jobs and publishes their outputs to GitHub Releases. The workflow can also be started manually to produce Actions artifacts without creating a release.
 
 ## Architecture
 
