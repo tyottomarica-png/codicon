@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("codicon", {
   interrupt: (payload) => ipcRenderer.invoke("agent:interrupt", payload),
   respond: (payload) => ipcRenderer.invoke("agent:respond", payload),
   resumeThread: (payload) => ipcRenderer.invoke("agent:resume-thread", payload),
+  closeThread: (payload) => ipcRenderer.invoke("agent:close-thread", payload),
   listThreads: (provider) => ipcRenderer.invoke("agent:list-threads", provider),
   voiceStart: (payload) => ipcRenderer.invoke("agent:voice-start", payload),
   voiceAudio: (payload) => ipcRenderer.invoke("agent:voice-audio", payload),
@@ -32,6 +33,12 @@ contextBridge.exposeInMainWorld("codicon", {
   setTarget: (target) => ipcRenderer.invoke("codicon:set-target", target),
   cycleTarget: () => ipcRenderer.invoke("codicon:cycle-target"),
   onTargetChanged: (listener) => subscribe("target:changed", listener),
+
+  // Direct control: send the chosen command to the agent app the user already has open.
+  directStatus: () => ipcRenderer.invoke("codicon:direct-status"),
+  requestAccessibility: () => ipcRenderer.invoke("codicon:request-accessibility"),
+  directDispatch: (payload) => ipcRenderer.invoke("codicon:direct-dispatch", payload),
+  onDirectResult: (listener) => subscribe("direct:result", listener),
 
   // Controller input is read by the main process so it survives losing focus to another app.
   controllerStatus: () => ipcRenderer.invoke("codicon:controller-status"),

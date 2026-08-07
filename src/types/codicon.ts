@@ -20,6 +20,34 @@ export type ControllerBindings = {
   fastMode: number;
   settings: number;
   switchTarget: number;
+  skillsRing: number;
+};
+
+/** One entry of the Skills ring: a saved prompt the controller can fire at the active chat. */
+export type Skill = {
+  id: string;
+  label: string;
+  prompt: string;
+  color: string;
+};
+
+/** How a ring commit reaches the agent: not at all, via the clipboard, or by typing it. */
+export type DirectControlMode = "off" | "clipboard" | "type";
+
+export type DirectStatus = {
+  mode: DirectControlMode;
+  typingAvailable: boolean;
+  accessibilityTrusted: boolean;
+  platform: string;
+  lastResult: DirectResult | null;
+};
+
+export type DirectResult = {
+  sent: boolean;
+  mode: string;
+  preview: string;
+  reason?: string;
+  at?: number;
 };
 
 export type TargetSettings = {
@@ -38,7 +66,9 @@ export type CodiconSettings = {
   deadzone: number;
   permissionMode: PermissionMode;
   target: TargetSettings;
+  directControl: { mode: DirectControlMode };
   providers: Record<AgentProvider, { slots: ModelSlot[] }>;
+  skills: Skill[];
   bindings: ControllerBindings;
 };
 
@@ -138,7 +168,11 @@ export type ControllerAction =
   | { type: "pushToTalk/start" }
   | { type: "pushToTalk/stop" }
   | { type: "fastToggle" }
-  | { type: "switchTarget" };
+  | { type: "switchTarget" }
+  | { type: "skills/open" }
+  | { type: "skills/preview"; skillIndex: number | null }
+  | { type: "skills/commit" }
+  | { type: "skills/cancel" };
 
 export type ControllerStatus = {
   /** False when SDL could not start; the renderer then has no controller input at all. */
@@ -168,11 +202,16 @@ export type HudState = {
   voiceActive: boolean;
   approvalPending: boolean;
   controller: boolean;
+  /** Live chat counts, mirroring the Agent Keys lamps. */
+  agentsRunning: number;
+  agentsWaiting: number;
+  agentsTotal: number;
 };
 
 /** State the main window publishes for the standalone wheel overlay window. */
 export type WheelOverlayState = {
   open: boolean;
+  mode: "power" | "skills";
   target: AgentProvider;
   slots: ModelSlot[];
   models: AgentModel[];
@@ -181,6 +220,8 @@ export type WheelOverlayState = {
   previewSlot: number | null;
   previewEffort: string | null;
   serviceTier: string | null;
+  skills: Skill[];
+  previewSkill: number | null;
 };
 
 export type AudioChunk = {
@@ -204,6 +245,7 @@ export type CodiconApi = {
   interrupt(payload: { provider: AgentProvider; threadId: string; turnId: string }): Promise<unknown>;
   respond(payload: { provider: AgentProvider; id: number | string; decision?: string; answers?: Record<string, string> }): Promise<boolean>;
   resumeThread(payload: { provider: AgentProvider; threadId: string }): Promise<{ threadId: string; messages: Array<{ id: string; role: "user" | "assistant"; text: string }> }>;
+  closeThread(payload: { provider: AgentProvider; threadId: string }): Promise<boolean>;
   listThreads(provider: AgentProvider): Promise<{ data: ThreadSummary[] }>;
   voiceStart(payload: { provider: AgentProvider; threadId: string }): Promise<unknown>;
   voiceAudio(payload: { provider: AgentProvider; threadId: string; audio: AudioChunk }): Promise<unknown>;
@@ -215,8 +257,12 @@ export type CodiconApi = {
   cycleTarget(): Promise<TargetState>;
   onTargetChanged(listener: (state: TargetState) => void): () => void;
 
+  directStatus(): Promise<DirectStatus>;
+  requestAccessibility(): Promise<DirectStatus>;
+  directDispatch(payload: { provider: AgentProvider; action: string; value?: string | null }): Promise<DirectResult>;
+  onDirectResult(listener: (result: DirectResult) => void): () => void;
   controllerStatus(): Promise<ControllerStatus>;
-  setControllerContext(context: { modelCount: number; effortCount: number }): void;
+  setControllerContext(context: { modelCount: number; effortCount: number; skillCount: number }): void;
   onControllerActions(listener: (actions: ControllerAction[]) => void): () => void;
   onControllerSnapshot(listener: (snapshot: GamepadSnapshot) => void): () => void;
   onControllerStatus(listener: (status: ControllerStatus) => void): () => void;

@@ -288,12 +288,18 @@ class CodexAgent extends EventEmitter {
         this.emitEvent({ kind: "error", message: `未対応の Codex リクエストを拒否しました: ${message.method}` });
       } else {
         this.openRequests.set(message.id, { method: message.method, params: message.params || {} });
-        this.emitEvent(classified.event);
+        const threadId = message.params?.threadId;
+        this.emitEvent(threadId ? { ...classified.event, threadId } : classified.event);
       }
       return;
     }
     if (message.method) {
-      for (const event of normalizeCodexNotification(message)) this.emitEvent(event);
+      // app-server scopes thread events with threadId in params; carry it through so the renderer
+      // can route each event to the right chat now that several run at once.
+      const threadId = message.params?.threadId;
+      for (const event of normalizeCodexNotification(message)) {
+        this.emitEvent(threadId ? { ...event, threadId } : event);
+      }
     }
   }
 
@@ -431,6 +437,14 @@ class CodexAgent extends EventEmitter {
       return true;
     }
     this.respondRaw(payload.id, { decision });
+    return true;
+  }
+
+  /**
+   * Codex threads live in the app-server, not in this process, so closing a chat only drops our
+   * interest in it — the thread stays resumable from the history rail.
+   */
+  async closeThread() {
     return true;
   }
 

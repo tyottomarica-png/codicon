@@ -1,6 +1,38 @@
 # Codicon
 
-Codicon is a controller-first desktop control surface for **Claude Code and OpenAI Codex**. It runs on Linux and macOS, drives Codex through the official `app-server` protocol and Claude Code through the official Claude Agent SDK, and reads Xbox-compatible controllers at the OS level so everything keeps working while another application is in the foreground.
+Codicon is a **software control surface** for **Claude Code and OpenAI Codex**, driven by an Xbox-compatible controller. Think of the [Codex Micro macropad](https://openai.com/supply/co-lab/work-louder/): a peripheral, not another window to read in.
+
+Codicon deliberately **does not host the conversation**. There is no chat panel and no composer. What it gives you is what a macropad gives you — with a controller you already own:
+
+- **Agent Keys** — every live agent at once, each with a status lamp (thinking / running / needs-you / unread), so you can see what all of them are doing without switching.
+- **A dial for brainpower** — hold LB, push the sticks, pick model and reasoning effort.
+- **A joystick for Skills** — hold LT, flick, launch a saved workflow (review a PR, debug, refactor).
+- **Command keys** — approve, decline, interrupt, push-to-talk, new agent.
+
+It runs on Linux and macOS and reads the controller at the OS level, so every control keeps working while another application is in the foreground.
+
+## Direct control
+
+By default Codicon drives its own agent sessions (Codex over the official `app-server` protocol, Claude Code over the official Agent SDK). **Direct control** points the same rings at the agent you already have open instead — the physical macropad's behaviour, where a key press lands in whatever is in front of you.
+
+Turn it on in **Settings → Direct control**. Two modes:
+
+| Mode | What happens | Permission |
+| --- | --- | --- |
+| `clipboard` | The command is placed on your clipboard; you paste it with ⌘V | **none** |
+| `type` | The command is typed into the frontmost agent | macOS Accessibility |
+
+`type` also needs the optional native backend: `npm install @jitsi/robotjs` (Node-API, prebuilt for macOS and Linux — no compiler).
+
+The guardrails are structural, not advisory:
+
+- **Off by default.** Nothing is ever sent until you turn it on.
+- **One press, one dispatch.** No timers, retries or queues — every send traces to a physical controller edge.
+- **The target is re-checked at the moment of sending.** If you alt-tab to a browser or a password manager between choosing on the ring and releasing the trigger, the send is cancelled rather than typed into it.
+- **A minimum interval between sends**, so a stuck button cannot become a stream of input.
+- Codicon shows exactly what it sent, and why it did not.
+
+What the two CLIs actually accept was measured, not assumed. Claude Code takes an inline argument for `/model`, `/effort` and `/fast`. Codex does **not**: `supports_inline_args()` in `codex-rs/tui/src/slash_command.rs` excludes `Model` and `Permissions`, so `/model` there can only open the picker for you to choose from — Codicon opens it and stops, rather than sending arrow keys that would select the wrong row when the list changes.
 
 日本語の詳しい使い方は [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) を参照してください。
 
@@ -14,10 +46,11 @@ Codicon is a controller-first desktop control surface for **Claude Code and Open
 | Hold **RB** | Push to Talk; speech is sent through Codex realtime voice (Codex target only) |
 | Click **RS** | Toggle Fast mode without changing reasoning effort |
 | **VIEW** | Switch the target agent (Codex ⇄ Claude Code) |
-| **A** | Send the typed prompt, or approve the current request |
-| **B** | Interrupt the active turn, decline an approval, or cancel the ring |
-| **X** | Focus the text composer |
-| **Y** | Start a fresh session (the old thread remains in history) |
+| Hold **LT** + left stick | Pick a Skill; release to run it against the active agent |
+| **A** | Approve the pending request |
+| **B** | Interrupt the active turn, decline an approval, or cancel a ring |
+| **X** | Bring Codicon to the front |
+| **Y** | Start a fresh agent |
 | **Menu** | Open settings |
 
 The model ring is populated live from each backend — `model/list` for Codex, `supportedModels()` for Claude Code — so new models appear without an app update. Each backend has its own three presets, reassignable in Settings.
