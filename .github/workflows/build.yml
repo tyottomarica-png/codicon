@@ -19,9 +19,17 @@ jobs:
             command: dist:linux
             artifact: linux
             paths: dist/*.AppImage
+          # The SDL controller binding is a per-architecture native download, so each macOS
+          # artifact has to be produced on a runner of that architecture rather than cross-built.
           - os: macos-15
             command: dist:mac
-            artifact: macos
+            artifact: macos-arm64
+            paths: |
+              dist/*.dmg
+              dist/*.zip
+          - os: macos-15-intel
+            command: dist:mac
+            artifact: macos-x64
             paths: |
               dist/*.dmg
               dist/*.zip
