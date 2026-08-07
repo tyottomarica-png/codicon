@@ -43,6 +43,9 @@ export const fallbackSettings: CodiconSettings = {
   workspace: "/Users/you/Projects/codicon",
   codexPath: "codex",
   controllerEnabled: true,
+  hudEnabled: true,
+  hudBounds: null,
+  quitOnWindowClose: false,
   deadzone: 0.42,
   permissionMode: "auto",
   modelSlots: [

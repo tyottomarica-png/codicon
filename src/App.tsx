@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityRail } from "./components/ActivityRail";
 import { ApprovalOverlay } from "./components/ApprovalOverlay";
 import { ChatPanel } from "./components/ChatPanel";
@@ -131,7 +131,7 @@ export default function App() {
     }
   };
 
-  const gamepad = useGamepad(session.settings, slots.length || 3, effectiveEfforts.length || 5, {
+  const controller = useGamepad(session.settings, slots.length || 3, effectiveEfforts.length || 5, {
     onWheelOpen: openWheel,
     onWheelPreview: previewWheel,
     onWheelCommit: commitWheel,
@@ -146,13 +146,38 @@ export default function App() {
     onFastToggle: () => void session.toggleFast(),
   });
 
+  // Mirror the parts of the session the overlay shows. The HUD lives in its own window, so it
+  // cannot read this state directly and the main process relays it instead.
+  useEffect(() => {
+    window.codicon?.publishHudState({
+      connection: session.connection,
+      model: session.selectedModel?.displayName || "",
+      effort: session.selectedEffort,
+      serviceTier: session.selectedServiceTier,
+      busy: Boolean(session.activeTurnId),
+      voiceActive: session.voiceActive,
+      approvalPending: Boolean(session.approval || session.inputRequest),
+      controller: controller.snapshot.connected,
+    });
+  }, [
+    session.connection,
+    session.selectedModel,
+    session.selectedEffort,
+    session.selectedServiceTier,
+    session.activeTurnId,
+    session.voiceActive,
+    session.approval,
+    session.inputRequest,
+    controller.snapshot.connected,
+  ]);
+
   if (!session.settings || !slots.length || !session.models.length) {
     return <div className="boot-screen"><div className="boot-mark">C</div><span>INITIALIZING CONTROL SURFACE</span><i /></div>;
   }
 
   return (
     <div className="app-shell">
-      <StatusBar connection={session.connection} gamepad={gamepad} workspace={session.settings.workspace} onWorkspace={() => void session.chooseWorkspace()} />
+      <StatusBar connection={session.connection} gamepad={controller.snapshot} controller={controller.status} workspace={session.settings.workspace} onWorkspace={() => void session.chooseWorkspace()} />
       <main className="app-grid">
         <div className="control-deck">
           <div className="deck-heading"><span>POWER CONTROL</span><small>DUAL-STICK RADIAL INPUT</small></div>
