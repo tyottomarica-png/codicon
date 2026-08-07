@@ -16,6 +16,12 @@ type GamepadActions = {
   onPushToTalkStart(): void;
   onPushToTalkStop(): void;
   onFastToggle(): void;
+  onSkillsOpen(): void;
+  onSkillsPreview(skillIndex: number | null): void;
+  onSkillsCommit(): void;
+  onSkillsCancel(): void;
+  /** Optional: the target cycle itself happens in the main process; this is for UI feedback. */
+  onSwitchTarget?(): void;
 };
 
 const EMPTY_SNAPSHOT: GamepadSnapshot = { connected: false, id: "", left: [0, 0], right: [0, 0] };
@@ -45,6 +51,7 @@ export function useGamepad(
   settings: CodiconSettings | null,
   modelCount: number,
   effortCount: number,
+  skillCount: number,
   actions: GamepadActions,
 ): ControllerState {
   const [snapshot, setSnapshot] = useState<GamepadSnapshot>(EMPTY_SNAPSHOT);
@@ -52,10 +59,10 @@ export function useGamepad(
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
 
-  // The ring sizes come from the loaded model list, which only the renderer knows.
+  // The ring sizes come from the loaded model list and saved skills, which only the renderer knows.
   useEffect(() => {
-    window.codicon?.setControllerContext({ modelCount, effortCount });
-  }, [modelCount, effortCount]);
+    window.codicon?.setControllerContext({ modelCount, effortCount, skillCount });
+  }, [modelCount, effortCount, skillCount]);
 
   useEffect(() => {
     const codicon = window.codicon;
@@ -76,6 +83,11 @@ export function useGamepad(
         case "pushToTalk/start": handlers.onPushToTalkStart(); break;
         case "pushToTalk/stop": handlers.onPushToTalkStop(); break;
         case "fastToggle": handlers.onFastToggle(); break;
+        case "switchTarget": handlers.onSwitchTarget?.(); break;
+        case "skills/open": handlers.onSkillsOpen(); break;
+        case "skills/preview": handlers.onSkillsPreview(action.skillIndex); break;
+        case "skills/commit": handlers.onSkillsCommit(); break;
+        case "skills/cancel": handlers.onSkillsCancel(); break;
       }
     };
 
