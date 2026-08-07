@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("codicon", {
   interrupt: (payload) => ipcRenderer.invoke("agent:interrupt", payload),
   respond: (payload) => ipcRenderer.invoke("agent:respond", payload),
   resumeThread: (payload) => ipcRenderer.invoke("agent:resume-thread", payload),
+  closeThread: (payload) => ipcRenderer.invoke("agent:close-thread", payload),
   listThreads: (provider) => ipcRenderer.invoke("agent:list-threads", provider),
   voiceStart: (payload) => ipcRenderer.invoke("agent:voice-start", payload),
   voiceAudio: (payload) => ipcRenderer.invoke("agent:voice-audio", payload),

@@ -45,7 +45,9 @@ function createControllerMapper() {
   let previousButtons = [];
   let previousId = null;
   let wheelOpen = false;
+  let skillsOpen = false;
   let previousPreview = "null:null";
+  let previousSkillPreview = "null";
   let pushToTalkActive = false;
 
   // Releasing Push to Talk must always be delivered, even if the reader stops seeing the pad
@@ -63,6 +65,13 @@ function createControllerMapper() {
     actions.push({ type: reason });
   }
 
+  function closeSkills(actions, reason) {
+    if (!skillsOpen) return;
+    skillsOpen = false;
+    previousSkillPreview = "null";
+    actions.push({ type: reason });
+  }
+
   return {
     /**
      * Fold one poll of the raw gamepad list into semantic actions.
@@ -72,11 +81,13 @@ function createControllerMapper() {
     update(gamepads, config) {
       const actions = [];
       const { bindings, modelCount, effortCount } = config;
+      const skillCount = Math.max(1, Number(config.skillCount) || 1);
       const deadzone = typeof config.deadzone === "number" ? config.deadzone : DEFAULT_DEADZONE;
       const gamepad = pickGamepad(gamepads);
 
       if (!gamepad) {
         closeWheel(actions, "wheel/cancel");
+        closeSkills(actions, "skills/cancel");
         releasePushToTalk(actions);
         previousButtons = [];
         previousId = null;
@@ -125,15 +136,40 @@ function createControllerMapper() {
         actions.push({ type: "wheel/commit" });
         haptic = true;
       }
+      // Skills ring: the Codex Micro joystick flick, mapped to a held trigger + left stick.
+      if (bindings.skillsRing !== undefined && !wheelOpen) {
+        if (justPressed(bindings.skillsRing)) {
+          skillsOpen = true;
+          previousSkillPreview = "null";
+          actions.push({ type: "skills/open" });
+          haptic = true;
+        }
+        if (skillsOpen && pressed[bindings.skillsRing]) {
+          const skillIndex = sectorFromAxes(left[0], left[1], skillCount, deadzone);
+          const key = `${skillIndex}`;
+          if (key !== previousSkillPreview) {
+            previousSkillPreview = key;
+            actions.push({ type: "skills/preview", skillIndex });
+            if (skillIndex !== null) haptic = true;
+          }
+        }
+        if (skillsOpen && justReleased(bindings.skillsRing)) {
+          skillsOpen = false;
+          previousSkillPreview = "null";
+          actions.push({ type: "skills/commit" });
+          haptic = true;
+        }
+      }
       if (justPressed(bindings.fastMode)) {
         actions.push({ type: "fastToggle" });
         haptic = true;
       }
       if (justPressed(bindings.cancel)) {
         if (wheelOpen) closeWheel(actions, "wheel/cancel");
+        else if (skillsOpen) closeSkills(actions, "skills/cancel");
         else actions.push({ type: "cancel" });
       }
-      if (!wheelOpen) {
+      if (!wheelOpen && !skillsOpen) {
         if (justPressed(bindings.primary)) actions.push({ type: "primary" });
         if (justPressed(bindings.focusComposer)) actions.push({ type: "focusComposer" });
         if (justPressed(bindings.newThread)) actions.push({ type: "newThread" });
@@ -164,6 +200,7 @@ function createControllerMapper() {
     reset() {
       const actions = [];
       closeWheel(actions, "wheel/cancel");
+      closeSkills(actions, "skills/cancel");
       releasePushToTalk(actions);
       previousButtons = [];
       previousId = null;

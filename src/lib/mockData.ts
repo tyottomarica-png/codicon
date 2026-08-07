@@ -105,7 +105,13 @@ export const fallbackSettings: CodiconSettings = {
       ],
     },
   },
-  bindings: { primary: 0, cancel: 1, focusComposer: 2, newThread: 3, powerWheel: 4, pushToTalk: 5, fastMode: 11, settings: 9, switchTarget: 8 },
+  skills: [
+    { id: "review", label: "REVIEW PR", prompt: "Review the current branch's changes.", color: "#9bd6bd" },
+    { id: "debug", label: "DEBUG", prompt: "Diagnose the most recent error.", color: "#ff7a59" },
+    { id: "refactor", label: "REFACTOR", prompt: "Simplify the code I last touched.", color: "#9ba7ff" },
+    { id: "test", label: "TESTS", prompt: "Add the missing tests.", color: "#daa04f" },
+  ],
+  bindings: { primary: 0, cancel: 1, focusComposer: 2, newThread: 3, powerWheel: 4, pushToTalk: 5, fastMode: 11, settings: 9, switchTarget: 8, skillsRing: 6 },
 };
 
 export const previewBootstrap: BootstrapData = {

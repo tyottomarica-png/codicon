@@ -238,7 +238,9 @@ class ClaudeAgent extends EventEmitter {
     this.capabilities = { voice: false, steer: true, fastTier: true, question: false, liveEffort: true };
     this.getSettings = options.getSettings;
     this.sdk = null;
-    this.handle = null; // single live thread: { threadId, query, queue, state, model, effort, tier }
+    // One live SDK session per chat. Codex Micro shows several agents at once, so the adapter
+    // has to keep them all running rather than tearing the previous one down.
+    this.handles = new Map(); // threadId -> { threadId, query, queue, state, model, effort, tier }
     this.pendingApprovals = new Map();
     this.approvalCounter = 1;
     this.executablePath = undefined; // resolved lazily; null = nothing found
@@ -255,7 +257,7 @@ class ClaudeAgent extends EventEmitter {
     return this.sdk;
   }
 
-  baseOptions(settings, extra = {}) {
+  baseOptions(settings, threadId, extra = {}) {
     const options = {
       cwd: settings.workspace || undefined,
       includePartialMessages: true,
@@ -264,7 +266,7 @@ class ClaudeAgent extends EventEmitter {
       // silent no-op. This is the flag-settings layer, so it does not touch the user's own files.
       settings: { fastModePerSessionOptIn: true },
       ...claudePermissionOptions(settings.permissionMode),
-      canUseTool: (toolName, input, callbackOptions) => this.handlePermission(toolName, input, callbackOptions),
+      canUseTool: (toolName, input, callbackOptions) => this.handlePermission(threadId, toolName, input, callbackOptions),
       stderr: (line) => this.emitEvent({ kind: "log", message: String(line) }),
       ...extra,
     };
@@ -279,21 +281,22 @@ class ClaudeAgent extends EventEmitter {
     return options;
   }
 
-  handlePermission(toolName, input, callbackOptions) {
+  handlePermission(threadId, toolName, input, callbackOptions) {
     const id = `claude-approval-${this.approvalCounter++}`;
     const described = describeTool(toolName, input);
     return new Promise((resolve) => {
-      this.pendingApprovals.set(id, { resolve, input, suggestions: callbackOptions?.suggestions });
+      this.pendingApprovals.set(id, { resolve, input, suggestions: callbackOptions?.suggestions, threadId });
       const abort = () => {
         if (!this.pendingApprovals.has(id)) return;
         this.pendingApprovals.delete(id);
-        this.emitEvent({ kind: "approval-dismissed", id });
+        this.emitEvent({ kind: "approval-dismissed", id, threadId });
         resolve({ behavior: "deny", message: "The request was cancelled before the user answered.", decisionClassification: "user_reject" });
       };
       callbackOptions?.signal?.addEventListener?.("abort", abort, { once: true });
       this.emitEvent({
         kind: "approval",
         id,
+        threadId,
         title: callbackOptions?.displayName || described.title,
         command: callbackOptions?.title || described.detail || toolName,
         reason: callbackOptions?.decisionReason || callbackOptions?.description || "Claude Code がツールの実行許可を求めています。",
@@ -324,10 +327,11 @@ class ClaudeAgent extends EventEmitter {
     return true;
   }
 
-  async closeHandle() {
-    const handle = this.handle;
-    this.handle = null;
+  /** Close one chat's session. Other chats keep running. */
+  closeHandle(threadId) {
+    const handle = this.handles.get(threadId);
     if (!handle) return;
+    this.handles.delete(threadId);
     try {
       handle.queue.close();
       handle.query.close();
@@ -340,7 +344,7 @@ class ClaudeAgent extends EventEmitter {
   }
 
   /**
-   * Open a streaming-input query and pump its messages into normalized events.
+   * Open a streaming-input query for one chat and pump its messages into normalized events.
    *
    * The session id is known synchronously: new sessions are created with a forced UUID via
    * Options.sessionId, resumed sessions keep the id they are resumed under. Waiting for the
@@ -350,62 +354,67 @@ class ClaudeAgent extends EventEmitter {
   async openThread({ resume, model, effort, tier }) {
     const sdk = await this.loadSdk();
     const settings = this.getSettings();
-    await this.closeHandle();
     const threadId = resume || randomUUID();
+    // Re-opening the same chat replaces only that chat's session.
+    this.closeHandle(threadId);
     const queue = createInputQueue();
     const query = sdk.query({
       prompt: queue.stream(),
-      options: this.baseOptions(settings, {
+      options: this.baseOptions(settings, threadId, {
         model: model || undefined,
         effort: effort || undefined,
         ...(resume ? { resume } : { sessionId: threadId }),
       }),
     });
     const handle = { threadId, query, queue, state: createThreadState(), model, effort, tier: tier || null };
-    this.handle = handle;
+    this.handles.set(threadId, handle);
 
     (async () => {
       try {
         for await (const message of query) {
-          if (this.handle !== handle) break;
+          if (this.handles.get(handle.threadId) !== handle) break;
           // A resume can fork to a fresh id in edge cases; trust what the CLI reports.
-          if (message.session_id && message.session_id !== handle.threadId) handle.threadId = message.session_id;
+          if (message.session_id && message.session_id !== handle.threadId) {
+            this.handles.delete(handle.threadId);
+            handle.threadId = message.session_id;
+            this.handles.set(handle.threadId, handle);
+          }
           for (const event of normalizeClaudeMessage(message, handle.state)) {
             this.emitEvent({ ...event, threadId: handle.threadId });
           }
         }
-        if (this.handle === handle) {
+        if (this.handles.get(handle.threadId) === handle) {
           // The subprocess is gone; drop the handle so the next send reopens via resume instead
           // of pushing messages into a queue nothing drains.
-          this.handle = null;
-          this.emitEvent({ kind: "status", state: "exit", detail: "Claude セッションが終了しました" });
+          this.handles.delete(handle.threadId);
+          this.emitEvent({ kind: "status", state: "exit", detail: "Claude セッションが終了しました", threadId: handle.threadId });
           this.emitEvent({ kind: "turn-completed", threadId: handle.threadId });
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        if (this.handle === handle) {
-          this.handle = null;
-          this.emitEvent({ kind: "error", message: `Claude セッションでエラーが発生しました: ${detail}` });
-          this.emitEvent({ kind: "status", state: "exit", detail });
+        if (this.handles.get(handle.threadId) === handle) {
+          this.handles.delete(handle.threadId);
+          this.emitEvent({ kind: "error", message: `Claude セッションでエラーが発生しました: ${detail}`, threadId: handle.threadId });
+          this.emitEvent({ kind: "status", state: "exit", detail, threadId: handle.threadId });
           this.emitEvent({ kind: "turn-completed", threadId: handle.threadId });
         }
       }
     })();
 
-    this.emitEvent({ kind: "status", state: "ready" });
+    this.emitEvent({ kind: "status", state: "ready", threadId });
 
     // Fast mode is a flag setting, not an Options field; control requests work immediately.
     if (tier === FAST_TIER.id) {
-      await this.applyFast(true);
+      await this.applyFast(threadId, true);
     }
     return threadId;
   }
 
-  async applyFast(enabled) {
+  async applyFast(threadId, enabled) {
     try {
-      await this.handle?.query.applyFlagSettings({ fastMode: enabled });
+      await this.handles.get(threadId)?.query.applyFlagSettings({ fastMode: enabled });
     } catch (error) {
-      this.emitEvent({ kind: "error", message: `Fast mode を設定できませんでした: ${error instanceof Error ? error.message : String(error)}` });
+      this.emitEvent({ kind: "error", message: `Fast mode を設定できませんでした: ${error instanceof Error ? error.message : String(error)}`, threadId });
     }
   }
 
@@ -417,7 +426,7 @@ class ClaudeAgent extends EventEmitter {
       // requests, which answer immediately — do NOT await a stream message here: in streaming-input
       // mode the CLI defers system/init until the first user message, so that await never returns.
       const queue = createInputQueue();
-      const probe = sdk.query({ prompt: queue.stream(), options: this.baseOptions(settings) });
+      const probe = sdk.query({ prompt: queue.stream(), options: this.baseOptions(settings, "probe") });
       let models = [];
       let accountLabel = "CLAUDE";
       try {
@@ -454,10 +463,11 @@ class ClaudeAgent extends EventEmitter {
   }
 
   async sendMessage({ threadId, text, model, effort, tier, activeTurnId }) {
-    if (!this.handle || this.handle.threadId !== threadId) {
+    if (!this.handles.has(threadId)) {
       await this.openThread({ resume: threadId, model, effort, tier });
     }
-    const handle = this.handle;
+    const handle = this.handles.get(threadId);
+    if (!handle) throw new Error("Claude セッションを開けませんでした");
     // Settings changed since the last message travel as control requests before the turn.
     if (model && model !== handle.model) {
       await handle.query.setModel(model);
@@ -479,8 +489,8 @@ class ClaudeAgent extends EventEmitter {
   }
 
   async updatePower({ threadId, model, effort, tier }) {
-    const handle = this.handle;
-    if (!handle || handle.threadId !== threadId) return {};
+    const handle = this.handles.get(threadId);
+    if (!handle) return {};
     if (model && model !== handle.model) {
       await handle.query.setModel(model);
       handle.model = model;
@@ -491,15 +501,22 @@ class ClaudeAgent extends EventEmitter {
     }
     const nextTier = tier || null;
     if (nextTier !== handle.tier) {
-      await this.applyFast(nextTier === FAST_TIER.id);
+      await this.applyFast(threadId, nextTier === FAST_TIER.id);
       handle.tier = nextTier;
     }
     return {};
   }
 
+  /** Release one chat's resources without ending the others. */
+  async closeThread(threadId) {
+    this.closeHandle(threadId);
+    return true;
+  }
+
   async interrupt({ threadId }) {
-    if (!this.handle || this.handle.threadId !== threadId) return {};
-    await this.handle.query.interrupt();
+    const handle = this.handles.get(threadId);
+    if (!handle) return {};
+    await handle.query.interrupt();
     return {};
   }
 
@@ -528,7 +545,7 @@ class ClaudeAgent extends EventEmitter {
       messages = [];
     }
     // openThread assigned a session id; resumed sessions keep their id, forks would change it.
-    return { threadId: this.handle?.threadId || threadId, messages };
+    return { threadId: this.handles.get(threadId)?.threadId || threadId, messages };
   }
 
   async listThreads() {
@@ -555,7 +572,7 @@ class ClaudeAgent extends EventEmitter {
   }
 
   stop() {
-    void this.closeHandle();
+    for (const threadId of [...this.handles.keys()]) this.closeHandle(threadId);
     for (const [id, pending] of this.pendingApprovals) {
       pending.resolve({ behavior: "deny", message: "Codicon が終了しました。", decisionClassification: "user_reject" });
       this.emitEvent({ kind: "approval-dismissed", id });

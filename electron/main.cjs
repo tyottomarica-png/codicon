@@ -35,6 +35,12 @@ const DEFAULT_SETTINGS = {
       ],
     },
   },
+  skills: [
+    { id: "review", label: "REVIEW PR", prompt: "Review the current branch's changes and report defects, ranked by severity.", color: "#9bd6bd" },
+    { id: "debug", label: "DEBUG", prompt: "Reproduce and diagnose the most recent error, then propose the smallest correct fix.", color: "#ff7a59" },
+    { id: "refactor", label: "REFACTOR", prompt: "Simplify the code I last touched without changing its behaviour, and explain each change.", color: "#9ba7ff" },
+    { id: "test", label: "TESTS", prompt: "Add the tests that would have caught the most recent bug, and run them.", color: "#daa04f" },
+  ],
   bindings: {
     primary: 0,
     cancel: 1,
@@ -45,6 +51,7 @@ const DEFAULT_SETTINGS = {
     fastMode: 11,
     settings: 9,
     switchTarget: 8,
+    skillsRing: 6,
   },
 };
 
@@ -57,7 +64,7 @@ let settingsCache = null;
 
 // The ring sizes depend on the model list the renderer loaded, so the renderer publishes them up
 // to the main process where the controller edge detection lives.
-let controllerContext = { modelCount: 3, effortCount: 5 };
+let controllerContext = { modelCount: 3, effortCount: 5, skillCount: 4 };
 
 // Last states the main window published for the overlay windows. Cached so an overlay opened
 // later renders something immediately instead of waiting for the next change.
@@ -72,6 +79,9 @@ let hudState = {
   voiceActive: false,
   approvalPending: false,
   controller: false,
+  agentsRunning: 0,
+  agentsWaiting: 0,
+  agentsTotal: 0,
 };
 let wheelState = { open: false };
 
@@ -90,6 +100,7 @@ function upgradeSettings(stored, defaults) {
       codex: { slots: stored.providers?.codex?.slots?.length ? stored.providers.codex.slots : defaults.providers.codex.slots },
       claude: { slots: stored.providers?.claude?.slots?.length ? stored.providers.claude.slots : defaults.providers.claude.slots },
     },
+    skills: Array.isArray(stored.skills) && stored.skills.length ? stored.skills : defaults.skills,
   };
   // v0.1 kept the codex slots at the top level.
   if (Array.isArray(stored.modelSlots) && !stored.providers) {
@@ -171,6 +182,7 @@ const gamepad = new GamepadSource(() => {
     deadzone: settings.deadzone,
     modelCount: controllerContext.modelCount,
     effortCount: controllerContext.effortCount,
+    skillCount: controllerContext.skillCount,
   };
 });
 
@@ -564,6 +576,7 @@ function registerIpc() {
   ipcMain.handle("agent:interrupt", (_event, { provider, ...payload }) => agentFor(provider).interrupt(payload));
   ipcMain.handle("agent:respond", (_event, { provider, ...payload }) => agentFor(provider).respond(payload));
   ipcMain.handle("agent:resume-thread", (_event, { provider, threadId }) => agentFor(provider).resumeThread(threadId));
+  ipcMain.handle("agent:close-thread", (_event, { provider, threadId }) => agentFor(provider).closeThread(threadId));
   ipcMain.handle("agent:list-threads", (_event, provider) => agentFor(provider).listThreads());
   ipcMain.handle("agent:voice-start", (_event, { provider, threadId }) => agentFor(provider).voiceStart(threadId));
   ipcMain.handle("agent:voice-audio", (_event, { provider, ...payload }) => agentFor(provider).voiceAudio(payload));
@@ -578,6 +591,7 @@ function registerIpc() {
     controllerContext = {
       modelCount: Math.max(1, Number(context?.modelCount) || controllerContext.modelCount),
       effortCount: Math.max(1, Number(context?.effortCount) || controllerContext.effortCount),
+      skillCount: Math.max(1, Number(context?.skillCount) || controllerContext.skillCount),
     };
   });
   ipcMain.on("codicon:publish-hud-state", (_event, patch) => publishHudState(patch || {}));

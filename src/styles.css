@@ -92,6 +92,48 @@ body {
 .target-badge.target-codex i { background: #74d5a2; box-shadow: 0 0 7px rgba(116,213,162,.6); }
 .target-badge.target-claude i { background: #d97757; box-shadow: 0 0 7px rgba(217,119,87,.6); }
 
+/* Agent Keys: one row per live chat, each with a status lamp. The lamp colours are the whole
+   point — you read what every agent is doing without switching to it. */
+.agent-keys { display: grid; grid-template-rows: auto minmax(0,1fr) auto; min-height: 0; border-bottom: 1px solid var(--line); }
+.agent-key-list { overflow-y: auto; padding: 6px 10px 10px; display: grid; gap: 5px; align-content: start; }
+.agent-key { display: grid; grid-template-columns: 1fr auto; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.02); overflow: hidden; }
+.agent-key.is-active { border-color: var(--line-strong); background: rgba(255,255,255,.06); }
+.agent-key-main { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 9px; padding: 8px 4px 8px 10px; border: 0; background: transparent; cursor: pointer; text-align: left; min-width: 0; }
+.agent-key-index { font-size: 8px; font-weight: 760; letter-spacing: .08em; color: var(--faint); }
+.agent-key-lamp { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
+.agent-key-body { display: grid; gap: 2px; min-width: 0; }
+.agent-key-body strong { font-size: 10px; font-weight: 680; color: #d5d9d3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-key-body small { font-size: 7px; font-weight: 700; letter-spacing: .11em; color: var(--faint); }
+.agent-key-close { border: 0; background: transparent; color: var(--faint); font-size: 13px; padding: 0 9px; cursor: pointer; }
+.agent-key-close:hover { color: var(--ink); background: rgba(255,255,255,.06); }
+
+.agent-key.status-idle .agent-key-lamp { background: #4f5a55; }
+.agent-key.status-thinking .agent-key-lamp { background: var(--violet); box-shadow: 0 0 9px rgba(155,167,255,.7); animation: key-pulse 1.3s ease-in-out infinite; }
+.agent-key.status-running .agent-key-lamp { background: var(--accent); box-shadow: 0 0 9px rgba(255,118,87,.75); animation: key-pulse .9s ease-in-out infinite; }
+.agent-key.status-waiting .agent-key-lamp { background: #ffc46b; box-shadow: 0 0 11px rgba(255,196,107,.85); animation: key-pulse .6s ease-in-out infinite; }
+.agent-key.status-done .agent-key-lamp { background: var(--green); box-shadow: 0 0 9px rgba(155,214,189,.7); }
+.agent-key.status-error .agent-key-lamp { background: var(--danger); box-shadow: 0 0 9px rgba(255,95,99,.7); }
+.agent-key.status-waiting { border-color: rgba(255,196,107,.45); }
+.agent-key.status-done .agent-key-body strong { color: var(--ink); }
+
+.agent-key-new { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 0 10px 10px; }
+.agent-key-new button { padding: 7px 0; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); font-size: 7.5px; font-weight: 740; letter-spacing: .11em; cursor: pointer; }
+.agent-key-new button:hover:not(:disabled) { border-color: var(--line-strong); color: var(--ink); background: rgba(255,255,255,.05); }
+.agent-key-new button:disabled { opacity: .32; cursor: not-allowed; }
+
+@keyframes key-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* Skills ring — same radial language as the power ring, one ring of saved workflows. */
+.skills-ring-shell { position: relative; display: grid; place-items: center; min-height: 0; padding: 10px; }
+.skills-ring { display: block; width: min(100%, 520px); height: min(100%, 520px); max-height: 100%; overflow: visible; filter: drop-shadow(0 26px 50px rgba(0,0,0,.3)); }
+.skill-sector { cursor: pointer; outline: none; }
+.skill-sector path { fill: rgba(255,255,255,.028); stroke: rgba(255,255,255,.12); stroke-width: 1; transition: fill .16s, stroke .16s; }
+.skill-sector text { fill: #b8bfba; font-size: 13px; font-weight: 760; letter-spacing: .11em; pointer-events: none; transition: fill .16s; }
+.skill-sector:hover path, .skill-sector.is-active path { fill: color-mix(in srgb, var(--slot-color) 17%, #171b1c); stroke: color-mix(in srgb, var(--slot-color) 64%, transparent); }
+.skill-sector.is-active text { fill: var(--ink); }
+.skills-core-value { font-size: 12px; }
+.skills-prompt-preview { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); max-width: 84%; margin: 0; text-align: center; color: var(--faint); font-size: 8px; line-height: 1.5; }
+
 .provider-warning { position: absolute; top: 54px; left: 18px; right: 18px; z-index: 3; padding: 10px 14px; border: 1px solid rgba(255,95,99,.4); border-radius: 9px; background: rgba(40,18,18,.92); }
 .provider-warning strong { display: block; font-size: 10px; letter-spacing: .1em; color: #ffb3b0; }
 .provider-warning p { margin: 4px 0 0; font-size: 9px; line-height: 1.5; color: #d3a29b; word-break: break-all; }
@@ -395,4 +437,43 @@ select:focus, .text-control:focus { border-color: rgba(255,118,87,.45); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+
+.hud-agents { color: var(--muted); }
+.hud-agents.is-waiting { color: #ffc46b; }
+.side-rail { display: grid; grid-template-rows: minmax(140px, 40%) minmax(0, 1fr); min-height: 0; min-width: 0; background: rgba(18,22,23,.96); }
+.side-rail .activity-rail { min-height: 0; }
+
+.skill-settings { display: grid; gap: 8px; }
+.skill-row { display: grid; grid-template-columns: 8px 130px 1fr auto; align-items: start; gap: 8px; }
+.skill-row > i { width: 8px; height: 8px; border-radius: 50%; margin-top: 14px; }
+.skill-label { height: 34px; }
+.skill-prompt { min-height: 34px; padding: 8px 9px; line-height: 1.45; resize: vertical; }
+.skill-remove { align-self: start; margin-top: 6px; border: 0; background: transparent; color: var(--faint); font-size: 14px; cursor: pointer; }
+.skill-remove:hover { color: var(--danger); }
+.skill-add { padding: 8px 0; border: 1px dashed var(--line-strong); border-radius: 7px; background: transparent; color: var(--muted); font-size: 8px; letter-spacing: .1em; cursor: pointer; }
+.skill-add:hover { color: var(--ink); border-color: var(--ink); }
+
+/* Readout: what the agent is doing, not a transcript. Codicon is a control surface — the
+   conversation itself stays in Codex / Claude Code. */
+.agent-readout { display: grid; grid-template-rows: 42px minmax(0, 1fr) auto; min-width: 0; min-height: 0; background: rgba(18,22,23,.96); }
+.readout-activity { overflow-y: auto; padding: 10px 16px; display: grid; gap: 7px; align-content: start; }
+.readout-activity-row { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 9px; font-size: 9px; }
+.readout-activity-row strong { color: #cbd0cb; font-weight: 740; letter-spacing: .1em; font-size: 8px; }
+.readout-activity-row span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
+.readout-tail { border-top: 1px solid var(--line); padding: 11px 16px 14px; display: grid; gap: 6px; }
+.readout-tail-label { font-size: 7px; font-weight: 740; letter-spacing: .18em; color: var(--faint); }
+.readout-tail p { margin: 0; max-height: 132px; overflow-y: auto; color: #cdd2cd; font-size: 11px; line-height: 1.62; white-space: pre-wrap; }
+
+/* Control-surface layout: ring, agent keys, readout. No transcript — Codicon does not host the
+   conversation; you read and write in Codex or Claude Code. */
+.app-grid-surface { grid-template-columns: minmax(430px, 1.15fr) 268px minmax(320px, .85fr); }
+.app-grid-surface .control-deck { grid-template-rows: 42px minmax(320px, 1fr) 64px 86px; }
+@media (max-width: 1180px) {
+  .app-grid-surface { grid-template-columns: minmax(380px, 1fr) 244px; }
+  .app-grid-surface .agent-readout { display: none; }
+}
+@media (max-width: 860px) {
+  .app-grid-surface { grid-template-columns: 1fr; }
+  .app-grid-surface .agent-keys { min-height: 220px; }
 }

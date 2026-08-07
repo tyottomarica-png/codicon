@@ -15,7 +15,7 @@ const BUTTON_NAMES = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "VIEW", "MENU"
 const BINDING_LABELS: Array<[keyof ControllerBindings, string]> = [
   ["primary", "送信 / 承認"], ["cancel", "中断 / 拒否"], ["focusComposer", "キーボード入力"], ["newThread", "新規セッション"],
   ["powerWheel", "Power Ring（ホールド）"], ["pushToTalk", "Push to Talk（ホールド）"], ["settings", "設定パネル"],
-  ["fastMode", "Fast mode 切替"], ["switchTarget", "ターゲット切替"],
+  ["fastMode", "Fast mode 切替"], ["switchTarget", "ターゲット切替"], ["skillsRing", "Skills Ring（ホールド）"],
 ];
 
 export function SettingsPanel({ open, settings, codexModels, claudeModels, onClose, onChooseWorkspace, onSave }: Props) {
@@ -46,6 +46,7 @@ export function SettingsPanel({ open, settings, codexModels, claudeModels, onClo
       permissionMode: draft.permissionMode,
       target: draft.target,
       providers: draft.providers,
+      skills: draft.skills,
       bindings: draft.bindings,
     });
     onClose();
@@ -103,14 +104,42 @@ export function SettingsPanel({ open, settings, codexModels, claudeModels, onClo
             {slotSection("claude", claudeModels)}
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>05 / SAFETY</span><h3>Permission preset</h3><p>危険な操作の承認はPower Ringとは分離されています。Claude では read-only は plan モードに対応します。</p></div>
+            <div className="settings-copy"><span>05 / SKILLS</span><h3>Skills ring</h3><p>LTを押しながら左スティックで選び、離すと現在のチャットに送られます。よく使う作業を登録してください。</p></div>
+            <div className="skill-settings">
+              {draft.skills.map((skill, index) => (
+                <div className="skill-row" key={skill.id}>
+                  <i style={{ background: skill.color }} />
+                  <input
+                    className="text-control skill-label"
+                    value={skill.label}
+                    onChange={(event) => setDraft({ ...draft, skills: draft.skills.map((entry, at) => at === index ? { ...entry, label: event.target.value } : entry) })}
+                  />
+                  <textarea
+                    className="text-control skill-prompt"
+                    rows={2}
+                    value={skill.prompt}
+                    onChange={(event) => setDraft({ ...draft, skills: draft.skills.map((entry, at) => at === index ? { ...entry, prompt: event.target.value } : entry) })}
+                  />
+                  <button className="skill-remove" onClick={() => setDraft({ ...draft, skills: draft.skills.filter((_, at) => at !== index) })} aria-label="Remove skill">×</button>
+                </div>
+              ))}
+              <button
+                className="skill-add"
+                onClick={() => setDraft({ ...draft, skills: [...draft.skills, { id: `skill-${Date.now()}`, label: "NEW SKILL", prompt: "", color: "#8d9692" }] })}
+              >
+                + スキルを追加
+              </button>
+            </div>
+          </section>
+          <section className="settings-section">
+            <div className="settings-copy"><span>06 / SAFETY</span><h3>Permission preset</h3><p>危険な操作の承認はPower Ringとは分離されています。Claude では read-only は plan モードに対応します。</p></div>
             <div className="segmented-control">
               {(["read-only", "auto", "full"] as const).map((mode) => <button key={mode} className={draft.permissionMode === mode ? "is-active" : ""} onClick={() => setDraft({ ...draft, permissionMode: mode })}>{mode === "read-only" ? "READ ONLY" : mode === "auto" ? "AUTO" : "FULL ACCESS"}</button>)}
             </div>
             {draft.permissionMode === "full" && <p className="danger-note">Full Access はサンドボックス外の操作を許します。信頼できるリポジトリだけで使用してください。</p>}
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>06 / CONTROLLER</span><h3>Controller mappings</h3><p>標準Gamepadマッピングに対するボタン番号です。</p></div>
+            <div className="settings-copy"><span>07 / CONTROLLER</span><h3>Controller mappings</h3><p>標準Gamepadマッピングに対するボタン番号です。</p></div>
             <label className="range-control"><span>Stick deadzone <b>{draft.deadzone.toFixed(2)}</b></span><input type="range" min="0.18" max="0.72" step="0.02" value={draft.deadzone} onChange={(event) => setDraft({ ...draft, deadzone: Number(event.target.value) })} /></label>
             <div className="controller-toggle"><span>Controller input</span><button className={draft.controllerEnabled ? "is-active" : ""} onClick={() => setDraft({ ...draft, controllerEnabled: !draft.controllerEnabled })}>{draft.controllerEnabled ? "ENABLED" : "DISABLED"}</button></div>
             <div className="binding-grid">
@@ -118,13 +147,13 @@ export function SettingsPanel({ open, settings, codexModels, claudeModels, onClo
             </div>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>07 / BACKGROUND</span><h3>Background operation</h3><p>コントローラ入力はメインプロセスで読み取るため、他のアプリを前面にしていても動作します。</p></div>
+            <div className="settings-copy"><span>08 / BACKGROUND</span><h3>Background operation</h3><p>コントローラ入力はメインプロセスで読み取るため、他のアプリを前面にしていても動作します。</p></div>
             <div className="controller-toggle"><span>Status overlay</span><button className={draft.hudEnabled ? "is-active" : ""} onClick={() => setDraft({ ...draft, hudEnabled: !draft.hudEnabled })}>{draft.hudEnabled ? "ENABLED" : "DISABLED"}</button></div>
             <div className="controller-toggle"><span>Close window quits Codicon</span><button className={draft.quitOnWindowClose ? "is-active" : ""} onClick={() => setDraft({ ...draft, quitOnWindowClose: !draft.quitOnWindowClose })}>{draft.quitOnWindowClose ? "QUIT" : "STAY RESIDENT"}</button></div>
             <p className="settings-note">STAY RESIDENT ではウィンドウを閉じてもセッションは終了せず、メニューバーのアイコンから復帰できます。</p>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>08 / RUNTIME</span><h3>CLI paths</h3><p>空欄の場合、Codex は PATH 上の codex、Claude は SDK 同梱のバイナリを使用します。変更は再起動後に反映されます。</p></div>
+            <div className="settings-copy"><span>09 / RUNTIME</span><h3>CLI paths</h3><p>空欄の場合、Codex は PATH 上の codex、Claude は SDK 同梱のバイナリを使用します。変更は再起動後に反映されます。</p></div>
             <div className="runtime-paths">
               <label><span>codex</span><input className="text-control" value={draft.codexPath} placeholder="codex" onChange={(event) => setDraft({ ...draft, codexPath: event.target.value })} /></label>
               <label><span>claude</span><input className="text-control" value={draft.claudePath} placeholder="(SDK bundled)" onChange={(event) => setDraft({ ...draft, claudePath: event.target.value })} /></label>

@@ -1,6 +1,15 @@
 # Codicon
 
-Codicon is a controller-first desktop control surface for **Claude Code and OpenAI Codex**. It runs on Linux and macOS, drives Codex through the official `app-server` protocol and Claude Code through the official Claude Agent SDK, and reads Xbox-compatible controllers at the OS level so everything keeps working while another application is in the foreground.
+Codicon is a **software control surface** for **Claude Code and OpenAI Codex**, driven by an Xbox-compatible controller. Think of the [Codex Micro macropad](https://openai.com/supply/co-lab/work-louder/): a peripheral, not another window to read in.
+
+Codicon deliberately **does not host the conversation**. There is no chat panel and no composer. What it gives you is what a macropad gives you — with a controller you already own:
+
+- **Agent Keys** — every live agent at once, each with a status lamp (thinking / running / needs-you / unread), so you can see what all of them are doing without switching.
+- **A dial for brainpower** — hold LB, push the sticks, pick model and reasoning effort.
+- **A joystick for Skills** — hold LT, flick, launch a saved workflow (review a PR, debug, refactor).
+- **Command keys** — approve, decline, interrupt, push-to-talk, new agent.
+
+It runs on Linux and macOS, drives Codex through the official `app-server` protocol and Claude Code through the official Claude Agent SDK, and reads the controller at the OS level so every control keeps working while another application is in the foreground.
 
 日本語の詳しい使い方は [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) を参照してください。
 
@@ -14,10 +23,11 @@ Codicon is a controller-first desktop control surface for **Claude Code and Open
 | Hold **RB** | Push to Talk; speech is sent through Codex realtime voice (Codex target only) |
 | Click **RS** | Toggle Fast mode without changing reasoning effort |
 | **VIEW** | Switch the target agent (Codex ⇄ Claude Code) |
-| **A** | Send the typed prompt, or approve the current request |
-| **B** | Interrupt the active turn, decline an approval, or cancel the ring |
-| **X** | Focus the text composer |
-| **Y** | Start a fresh session (the old thread remains in history) |
+| Hold **LT** + left stick | Pick a Skill; release to run it against the active agent |
+| **A** | Approve the pending request |
+| **B** | Interrupt the active turn, decline an approval, or cancel a ring |
+| **X** | Bring Codicon to the front |
+| **Y** | Start a fresh agent |
 | **Menu** | Open settings |
 
 The model ring is populated live from each backend — `model/list` for Codex, `supportedModels()` for Claude Code — so new models appear without an app update. Each backend has its own three presets, reassignable in Settings.

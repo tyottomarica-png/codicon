@@ -13,6 +13,9 @@ const INITIAL: HudState = {
   voiceActive: false,
   approvalPending: false,
   controller: false,
+  agentsRunning: 0,
+  agentsWaiting: 0,
+  agentsTotal: 0,
 };
 
 function activity(state: HudState): { label: string; tone: string } {
@@ -59,6 +62,11 @@ export function Hud() {
       <div className="hud-meta">
         <span>{state.effort ? effortLabel(state.effort) : "—"}</span>
         <span>{state.serviceTier ? "FAST" : "STANDARD"}</span>
+        {state.agentsTotal > 0 && (
+          <span className={state.agentsWaiting ? "hud-agents is-waiting" : "hud-agents"}>
+            {state.agentsWaiting ? `${state.agentsWaiting} NEEDS YOU` : `${state.agentsRunning}/${state.agentsTotal} RUNNING`}
+          </span>
+        )}
         <span className="hud-source">{state.targetSource === "manual" ? "MANUAL" : "AUTO"}</span>
       </div>
     </div>
