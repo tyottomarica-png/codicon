@@ -88,7 +88,23 @@ let hudState = {
   agentsWaiting: 0,
   agentsTotal: 0,
 };
-let wheelState = { open: false };
+// Full shape, not just { open }: the overlay merges what it receives, and a partial payload
+// would leave it without the arrays it renders from.
+const EMPTY_WHEEL_STATE = {
+  open: false,
+  mode: "power",
+  target: "codex",
+  slots: [],
+  models: [],
+  selectedSlot: 0,
+  selectedEffort: "medium",
+  previewSlot: null,
+  previewEffort: null,
+  serviceTier: null,
+  skills: [],
+  previewSkill: null,
+};
+let wheelState = { ...EMPTY_WHEEL_STATE };
 
 function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -448,7 +464,7 @@ function centerWheelOnActiveDisplay() {
 }
 
 function publishWheelState(state) {
-  wheelState = state || { open: false };
+  wheelState = { ...EMPTY_WHEEL_STATE, ...(state || {}) };
   if (!wheelWindow || wheelWindow.isDestroyed()) return;
   wheelWindow.webContents.send("wheel:state", wheelState);
   // The overlay only appears when the main window cannot show the wheel itself.

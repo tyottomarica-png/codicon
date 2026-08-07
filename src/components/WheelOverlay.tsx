@@ -26,20 +26,25 @@ const INITIAL: WheelOverlayState = {
 export function WheelOverlay() {
   const [state, setState] = useState<WheelOverlayState>(INITIAL);
 
-  useEffect(() => window.codicon?.onWheelState(setState), []);
+  // Merge over the defaults rather than replacing: the main process publishes a bare
+  // { open: false } when it has nothing cached, and dereferencing the missing arrays used to
+  // throw and take the whole overlay window down until the next full publish.
+  useEffect(() => window.codicon?.onWheelState((next) => setState((current) => ({ ...current, ...next }))), []);
 
   const showSkills = state.mode === "skills";
-  if (showSkills ? !state.skills.length : !state.slots.length) return null;
+  const slots = state.slots || [];
+  const skills = state.skills || [];
+  if (showSkills ? !skills.length : !slots.length) return null;
 
   return (
     <div className={`wheel-overlay ${state.open ? "is-open" : ""}`}>
       <div className={`wheel-overlay-target target-${state.target}`}>{state.target === "claude" ? "CLAUDE CODE" : "CODEX"}</div>
       {showSkills ? (
-        <SkillsRing skills={state.skills} previewSkill={state.previewSkill} open={state.open} onLaunch={() => undefined} />
+        <SkillsRing skills={skills} previewSkill={state.previewSkill ?? null} open={state.open} onLaunch={() => undefined} />
       ) : (
       <PowerWheel
-        slots={state.slots}
-        models={state.models}
+        slots={slots}
+        models={state.models || []}
         selectedSlot={state.selectedSlot}
         selectedEffort={state.selectedEffort}
         previewSlot={state.previewSlot}
