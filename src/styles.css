@@ -477,3 +477,18 @@ select:focus, .text-control:focus { border-color: rgba(255,118,87,.45); }
   .app-grid-surface { grid-template-columns: 1fr; }
   .app-grid-surface .agent-keys { min-height: 220px; }
 }
+
+/* Direct control: shows what was sent to the app you actually have open, and why it was not. */
+.direct-banner { position: absolute; left: 18px; right: 18px; bottom: 96px; z-index: 3; display: flex; align-items: center; gap: 10px; padding: 7px 12px; border: 1px solid rgba(155,214,189,.38); border-radius: 8px; background: rgba(18,30,26,.94); }
+.direct-banner.is-blocked { border-color: rgba(255,196,107,.42); background: rgba(34,28,16,.94); }
+.direct-mode { font-size: 7px; font-weight: 780; letter-spacing: .14em; color: var(--green); white-space: nowrap; }
+.direct-banner.is-blocked .direct-mode { color: #ffc46b; }
+.direct-detail { font-size: 9px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.direct-status { grid-column: 2; display: grid; gap: 6px; margin-top: -4px; }
+.direct-status > div { display: flex; align-items: center; gap: 8px; font-size: 9px; color: var(--muted); }
+.direct-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+.direct-status .is-ok i, .direct-status div.is-ok i { background: var(--green); }
+.direct-status .is-missing i { background: #ffc46b; }
+.direct-grant { margin-left: auto; padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: var(--ink); font-size: 8px; letter-spacing: .08em; cursor: pointer; }
+.direct-grant:hover { background: rgba(255,255,255,.08); }

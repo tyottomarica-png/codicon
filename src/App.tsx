@@ -14,7 +14,7 @@ import { previewBootstrap } from "./lib/mockData";
 import { effortLabel } from "./lib/radial";
 import { chatStatus, useChats } from "./hooks/useChats";
 import { useGamepad } from "./hooks/useGamepad";
-import type { AgentProvider, BootstrapData, CodiconSettings, TargetState } from "./types/codicon";
+import type { AgentProvider, BootstrapData, CodiconSettings, DirectResult, DirectStatus, TargetState } from "./types/codicon";
 
 const INITIAL_TARGET: TargetState = { target: "codex", source: "fallback", app: "", detected: null };
 
@@ -23,6 +23,8 @@ export default function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [settings, setSettings] = useState<CodiconSettings | null>(null);
   const [target, setTarget] = useState<TargetState>(INITIAL_TARGET);
+  const [direct, setDirect] = useState<DirectStatus | null>(null);
+  const [directResult, setDirectResult] = useState<DirectResult | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [wheelOpen, setWheelOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
@@ -53,10 +55,16 @@ export default function App() {
     };
     void load();
     const unsubscribe = window.codicon?.onTargetChanged(setTarget);
+    const unsubscribeDirect = window.codicon?.onDirectResult((result) => {
+      setDirectResult(result);
+      void window.codicon?.directStatus().then(setDirect).catch(() => undefined);
+    });
     void window.codicon?.getTarget().then(setTarget).catch(() => undefined);
+    void window.codicon?.directStatus().then(setDirect).catch(() => undefined);
     return () => {
       disposed = true;
       unsubscribe?.();
+      unsubscribeDirect?.();
     };
   }, []);
 
@@ -137,13 +145,24 @@ export default function App() {
     }
   };
 
+  // With direct control on, a ring commit is aimed at the agent already open in another app;
+  // the local session only takes it when direct control is off or the front app is not that agent.
+  const directOn = Boolean(direct && direct.mode !== "off");
+
   const commitWheel = () => {
     const slot = previewSlotRef.current ?? wheelOrigin.current.slot;
     const effort = previewEffortRef.current ?? wheelOrigin.current.effort;
-    if (chat) void chats.selectPower(chat.id, slot, effort);
     setWheelOpen(false);
     setPreviewSlot(null);
     setPreviewEffort(null);
+    if (directOn) {
+      const chosen = slots[slot];
+      const model = models.find((entry) => entry.model === chosen?.modelId || entry.id === chosen?.modelId);
+      if (model) void window.codicon?.directDispatch({ provider, action: "model", value: model.model });
+      if (effort) void window.codicon?.directDispatch({ provider, action: "effort", value: effort });
+      return;
+    }
+    if (chat) void chats.selectPower(chat.id, slot, effort);
   };
 
   const cancelWheel = () => {
@@ -156,9 +175,13 @@ export default function App() {
 
   const launchSkill = useCallback((index: number) => {
     const skill = skills[index];
-    if (!skill || !chat) return;
-    void chats.sendMessage(chat.id, skill.prompt);
-  }, [skills, chat, chats]);
+    if (!skill) return;
+    if (directOn) {
+      void window.codicon?.directDispatch({ provider, action: "prompt", value: skill.prompt });
+      return;
+    }
+    if (chat) void chats.sendMessage(chat.id, skill.prompt);
+  }, [skills, chat, chats, directOn, provider]);
 
   const commitSkill = () => {
     const index = previewSkillRef.current;
@@ -250,16 +273,24 @@ export default function App() {
     onCancel: () => {
       if (blocked?.approval) {
         if (blockedSeen()) void chats.respondApproval(blocked.id, "decline");
+      } else if (directOn) {
+        void window.codicon?.directDispatch({ provider, action: "interrupt" });
       } else if (chat) {
         void chats.interrupt(chat.id);
       }
     },
     onFocusComposer: () => window.codicon?.showMainWindow(),
-    onNewThread: () => chats.newChat(provider),
+    onNewThread: () => (directOn ? void window.codicon?.directDispatch({ provider, action: "newChat" }) : chats.newChat(provider)),
     onSettings: () => (settingsOpen ? setSettingsOpen(false) : void openSettings()),
     onPushToTalkStart: () => void startVoice(),
     onPushToTalkStop: () => void stopVoice(),
-    onFastToggle: () => { if (chat) void chats.toggleFast(chat.id); },
+    onFastToggle: () => {
+      if (directOn) {
+        void window.codicon?.directDispatch({ provider, action: "fast", value: chat?.tier ? "off" : "on" });
+        return;
+      }
+      if (chat) void chats.toggleFast(chat.id);
+    },
   });
 
   const counts = useMemo(() => {
@@ -314,6 +345,7 @@ export default function App() {
   const saveSettings = useCallback(async (next: Partial<CodiconSettings>) => {
     const saved = window.codicon ? await window.codicon.saveSettings(next) : { ...settings!, ...next };
     setSettings(saved);
+    void window.codicon?.directStatus().then(setDirect).catch(() => undefined);
   }, [settings]);
 
   if (!settings || !boot) {
@@ -367,6 +399,16 @@ export default function App() {
             <div><kbd>LT</kbd><span>HOLD + LS</span><strong>RUN SKILL</strong></div>
             <div><kbd>A</kbd><span>APPROVE</span><strong>B TO DECLINE</strong></div>
           </div>
+          {directOn && (
+            <div className={`direct-banner ${directResult && !directResult.sent ? "is-blocked" : ""}`}>
+              <span className="direct-mode">{direct?.mode === "type" ? "DIRECT · TYPE" : "DIRECT · CLIPBOARD"}</span>
+              <span className="direct-detail">
+                {directResult
+                  ? `${directResult.preview || "—"}${directResult.sent ? "" : ` — ${directResult.reason || ""}`}`
+                  : `${target.detected ? `${target.detected.toUpperCase()} が前面` : "対象アプリを前面にしてください"}`}
+              </span>
+            </div>
+          )}
         </div>
         <AgentKeys
           chats={chats.chats}
@@ -400,6 +442,8 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         onChooseWorkspace={chooseWorkspace}
         onSave={saveSettings}
+        direct={direct}
+        onRequestAccessibility={() => void window.codicon?.requestAccessibility().then(setDirect).catch(() => undefined)}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session, Tray } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, screen, session, systemPreferences, Tray } = require("electron");
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -7,6 +7,8 @@ const { CodexAgent } = require("./agents/codexAgent.cjs");
 const { ClaudeAgent } = require("./agents/claudeAgent.cjs");
 const { FocusTracker } = require("./focusTracker.cjs");
 const { GamepadSource } = require("./gamepadSource.cjs");
+const { InputBridge } = require("./inputBridge.cjs");
+const { planKeystrokes } = require("./keystrokePlan.cjs");
 
 const DEFAULT_SETTINGS = {
   workspace: "",
@@ -19,6 +21,9 @@ const DEFAULT_SETTINGS = {
   deadzone: 0.42,
   permissionMode: "auto",
   target: { mode: "auto", manual: "codex" },
+  // Direct control: drive the agent already open in another app instead of Codicon's own session.
+  // "off" until the user opts in; "clipboard" needs no OS permission, "type" needs Accessibility.
+  directControl: { mode: "off" },
   providers: {
     codex: {
       slots: [
@@ -95,6 +100,7 @@ function upgradeSettings(stored, defaults) {
     ...defaults,
     ...stored,
     target: { ...defaults.target, ...(stored.target || {}) },
+    directControl: { ...defaults.directControl, ...(stored.directControl || {}) },
     bindings: { ...defaults.bindings, ...(stored.bindings || {}) },
     providers: {
       codex: { slots: stored.providers?.codex?.slots?.length ? stored.providers.codex.slots : defaults.providers.codex.slots },
@@ -201,6 +207,15 @@ gamepad.on("status", (status) => {
 });
 
 const focusTracker = new FocusTracker({ getMode: () => loadSettings().target });
+
+const inputBridge = new InputBridge({
+  getSettings: loadSettings,
+  // The detected agent, not the resolved target: a manual pin must never make Codicon type into
+  // an app that is not actually that agent.
+  getFrontApp: () => ({ agent: focusTracker.state.detected, name: focusTracker.state.app }),
+  clipboard,
+  systemPreferences,
+});
 
 function currentTarget() {
   return focusTracker.state;
@@ -585,6 +600,19 @@ function registerIpc() {
   ipcMain.handle("codicon:get-target", () => currentTarget());
   ipcMain.handle("codicon:set-target", (_event, target) => setTarget(target));
   ipcMain.handle("codicon:cycle-target", () => cycleTarget());
+
+  ipcMain.handle("codicon:direct-status", () => inputBridge.status());
+  ipcMain.handle("codicon:request-accessibility", () => {
+    // Opens the standard macOS prompt; the user grants it in System Settings.
+    inputBridge.isTrusted(true);
+    return inputBridge.status();
+  });
+  ipcMain.handle("codicon:direct-dispatch", (_event, { provider, action, value }) => {
+    const plan = planKeystrokes({ provider, action, value });
+    const result = inputBridge.dispatch(plan, { provider });
+    broadcast("direct:result", result);
+    return result;
+  });
 
   ipcMain.handle("codicon:controller-status", () => gamepad.status);
   ipcMain.on("codicon:set-controller-context", (_event, context) => {

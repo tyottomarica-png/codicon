@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AgentModel, AgentProvider, CodiconSettings, ControllerBindings } from "../types/codicon";
+import type { AgentModel, AgentProvider, CodiconSettings, ControllerBindings, DirectControlMode, DirectStatus } from "../types/codicon";
 
 type Props = {
   open: boolean;
@@ -9,6 +9,8 @@ type Props = {
   onClose(): void;
   onChooseWorkspace(): Promise<string | null>;
   onSave(settings: Partial<CodiconSettings>): Promise<void>;
+  direct: DirectStatus | null;
+  onRequestAccessibility(): void;
 };
 
 const BUTTON_NAMES = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "VIEW", "MENU", "LS", "RS", "DPAD ↑", "DPAD ↓", "DPAD ←", "DPAD →"];
@@ -18,7 +20,7 @@ const BINDING_LABELS: Array<[keyof ControllerBindings, string]> = [
   ["fastMode", "Fast mode 切替"], ["switchTarget", "ターゲット切替"], ["skillsRing", "Skills Ring（ホールド）"],
 ];
 
-export function SettingsPanel({ open, settings, codexModels, claudeModels, onClose, onChooseWorkspace, onSave }: Props) {
+export function SettingsPanel({ open, settings, codexModels, claudeModels, onClose, onChooseWorkspace, onSave, direct, onRequestAccessibility }: Props) {
   const [draft, setDraft] = useState(settings);
   // Reset only when the panel opens: mid-edit settings changes (workspace picker, tray toggles)
   // must not silently discard everything the user has changed in the open panel.
@@ -45,6 +47,7 @@ export function SettingsPanel({ open, settings, codexModels, claudeModels, onClo
       deadzone: draft.deadzone,
       permissionMode: draft.permissionMode,
       target: draft.target,
+      directControl: draft.directControl,
       providers: draft.providers,
       skills: draft.skills,
       bindings: draft.bindings,
@@ -104,7 +107,34 @@ export function SettingsPanel({ open, settings, codexModels, claudeModels, onClo
             {slotSection("claude", claudeModels)}
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>05 / SKILLS</span><h3>Skills ring</h3><p>LTを押しながら左スティックで選び、離すと現在のチャットに送られます。よく使う作業を登録してください。</p></div>
+            <div className="settings-copy">
+              <span>05 / DIRECT</span><h3>Direct control</h3>
+              <p>リングでの選択を、Codicon 内のセッションではなく<strong>いま前面で開いている Claude / Codex そのもの</strong>に送ります。物理マクロパッドと同じ動作です。</p>
+            </div>
+            <div className="segmented-control">
+              {([["off", "OFF"], ["clipboard", "CLIPBOARD"], ["type", "TYPE"]] as Array<[DirectControlMode, string]>).map(([mode, label]) => (
+                <button key={mode} className={draft.directControl.mode === mode ? "is-active" : ""} onClick={() => setDraft({ ...draft, directControl: { mode } })}>{label}</button>
+              ))}
+            </div>
+            <p className="settings-note">
+              CLIPBOARD はコマンドをクリップボードに置くだけで、OS の権限は一切不要です（⌘V で貼り付け）。
+              TYPE は実際にキー入力を送るため、macOS の「アクセシビリティ」許可が必要です。
+              いずれのモードでも、送信直前に前面アプリが対象エージェントであることを再確認し、違えば送信を中止します。
+            </p>
+            {draft.directControl.mode === "type" && (
+              <div className="direct-status">
+                <div className={direct?.typingAvailable ? "is-ok" : "is-missing"}>
+                  <i />入力モジュール: {direct?.typingAvailable ? "利用可能" : "未インストール（npm install @jitsi/robotjs）"}
+                </div>
+                <div className={direct?.accessibilityTrusted ? "is-ok" : "is-missing"}>
+                  <i />アクセシビリティ許可: {direct?.accessibilityTrusted ? "許可済み" : "未許可"}
+                  {!direct?.accessibilityTrusted && <button className="direct-grant" onClick={onRequestAccessibility}>許可を求める</button>}
+                </div>
+              </div>
+            )}
+          </section>
+          <section className="settings-section">
+            <div className="settings-copy"><span>06 / SKILLS</span><h3>Skills ring</h3><p>LTを押しながら左スティックで選び、離すと現在のチャットに送られます。よく使う作業を登録してください。</p></div>
             <div className="skill-settings">
               {draft.skills.map((skill, index) => (
                 <div className="skill-row" key={skill.id}>
@@ -132,14 +162,14 @@ export function SettingsPanel({ open, settings, codexModels, claudeModels, onClo
             </div>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>06 / SAFETY</span><h3>Permission preset</h3><p>危険な操作の承認はPower Ringとは分離されています。Claude では read-only は plan モードに対応します。</p></div>
+            <div className="settings-copy"><span>07 / SAFETY</span><h3>Permission preset</h3><p>危険な操作の承認はPower Ringとは分離されています。Claude では read-only は plan モードに対応します。</p></div>
             <div className="segmented-control">
               {(["read-only", "auto", "full"] as const).map((mode) => <button key={mode} className={draft.permissionMode === mode ? "is-active" : ""} onClick={() => setDraft({ ...draft, permissionMode: mode })}>{mode === "read-only" ? "READ ONLY" : mode === "auto" ? "AUTO" : "FULL ACCESS"}</button>)}
             </div>
             {draft.permissionMode === "full" && <p className="danger-note">Full Access はサンドボックス外の操作を許します。信頼できるリポジトリだけで使用してください。</p>}
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>07 / CONTROLLER</span><h3>Controller mappings</h3><p>標準Gamepadマッピングに対するボタン番号です。</p></div>
+            <div className="settings-copy"><span>08 / CONTROLLER</span><h3>Controller mappings</h3><p>標準Gamepadマッピングに対するボタン番号です。</p></div>
             <label className="range-control"><span>Stick deadzone <b>{draft.deadzone.toFixed(2)}</b></span><input type="range" min="0.18" max="0.72" step="0.02" value={draft.deadzone} onChange={(event) => setDraft({ ...draft, deadzone: Number(event.target.value) })} /></label>
             <div className="controller-toggle"><span>Controller input</span><button className={draft.controllerEnabled ? "is-active" : ""} onClick={() => setDraft({ ...draft, controllerEnabled: !draft.controllerEnabled })}>{draft.controllerEnabled ? "ENABLED" : "DISABLED"}</button></div>
             <div className="binding-grid">
@@ -147,13 +177,13 @@ export function SettingsPanel({ open, settings, codexModels, claudeModels, onClo
             </div>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>08 / BACKGROUND</span><h3>Background operation</h3><p>コントローラ入力はメインプロセスで読み取るため、他のアプリを前面にしていても動作します。</p></div>
+            <div className="settings-copy"><span>09 / BACKGROUND</span><h3>Background operation</h3><p>コントローラ入力はメインプロセスで読み取るため、他のアプリを前面にしていても動作します。</p></div>
             <div className="controller-toggle"><span>Status overlay</span><button className={draft.hudEnabled ? "is-active" : ""} onClick={() => setDraft({ ...draft, hudEnabled: !draft.hudEnabled })}>{draft.hudEnabled ? "ENABLED" : "DISABLED"}</button></div>
             <div className="controller-toggle"><span>Close window quits Codicon</span><button className={draft.quitOnWindowClose ? "is-active" : ""} onClick={() => setDraft({ ...draft, quitOnWindowClose: !draft.quitOnWindowClose })}>{draft.quitOnWindowClose ? "QUIT" : "STAY RESIDENT"}</button></div>
             <p className="settings-note">STAY RESIDENT ではウィンドウを閉じてもセッションは終了せず、メニューバーのアイコンから復帰できます。</p>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>09 / RUNTIME</span><h3>CLI paths</h3><p>空欄の場合、Codex は PATH 上の codex、Claude は SDK 同梱のバイナリを使用します。変更は再起動後に反映されます。</p></div>
+            <div className="settings-copy"><span>10 / RUNTIME</span><h3>CLI paths</h3><p>空欄の場合、Codex は PATH 上の codex、Claude は SDK 同梱のバイナリを使用します。変更は再起動後に反映されます。</p></div>
             <div className="runtime-paths">
               <label><span>codex</span><input className="text-control" value={draft.codexPath} placeholder="codex" onChange={(event) => setDraft({ ...draft, codexPath: event.target.value })} /></label>
               <label><span>claude</span><input className="text-control" value={draft.claudePath} placeholder="(SDK bundled)" onChange={(event) => setDraft({ ...draft, claudePath: event.target.value })} /></label>

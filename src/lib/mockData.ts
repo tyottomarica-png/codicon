@@ -89,6 +89,7 @@ export const fallbackSettings: CodiconSettings = {
   deadzone: 0.42,
   permissionMode: "auto",
   target: { mode: "auto", manual: "codex" },
+  directControl: { mode: "off" },
   providers: {
     codex: {
       slots: [

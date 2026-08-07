@@ -31,6 +31,25 @@ export type Skill = {
   color: string;
 };
 
+/** How a ring commit reaches the agent: not at all, via the clipboard, or by typing it. */
+export type DirectControlMode = "off" | "clipboard" | "type";
+
+export type DirectStatus = {
+  mode: DirectControlMode;
+  typingAvailable: boolean;
+  accessibilityTrusted: boolean;
+  platform: string;
+  lastResult: DirectResult | null;
+};
+
+export type DirectResult = {
+  sent: boolean;
+  mode: string;
+  preview: string;
+  reason?: string;
+  at?: number;
+};
+
 export type TargetSettings = {
   mode: "auto" | "manual";
   manual: AgentProvider;
@@ -47,6 +66,7 @@ export type CodiconSettings = {
   deadzone: number;
   permissionMode: PermissionMode;
   target: TargetSettings;
+  directControl: { mode: DirectControlMode };
   providers: Record<AgentProvider, { slots: ModelSlot[] }>;
   skills: Skill[];
   bindings: ControllerBindings;
@@ -237,6 +257,10 @@ export type CodiconApi = {
   cycleTarget(): Promise<TargetState>;
   onTargetChanged(listener: (state: TargetState) => void): () => void;
 
+  directStatus(): Promise<DirectStatus>;
+  requestAccessibility(): Promise<DirectStatus>;
+  directDispatch(payload: { provider: AgentProvider; action: string; value?: string | null }): Promise<DirectResult>;
+  onDirectResult(listener: (result: DirectResult) => void): () => void;
   controllerStatus(): Promise<ControllerStatus>;
   setControllerContext(context: { modelCount: number; effortCount: number; skillCount: number }): void;
   onControllerActions(listener: (actions: ControllerAction[]) => void): () => void;

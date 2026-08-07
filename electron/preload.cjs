@@ -34,6 +34,12 @@ contextBridge.exposeInMainWorld("codicon", {
   cycleTarget: () => ipcRenderer.invoke("codicon:cycle-target"),
   onTargetChanged: (listener) => subscribe("target:changed", listener),
 
+  // Direct control: send the chosen command to the agent app the user already has open.
+  directStatus: () => ipcRenderer.invoke("codicon:direct-status"),
+  requestAccessibility: () => ipcRenderer.invoke("codicon:request-accessibility"),
+  directDispatch: (payload) => ipcRenderer.invoke("codicon:direct-dispatch", payload),
+  onDirectResult: (listener) => subscribe("direct:result", listener),
+
   // Controller input is read by the main process so it survives losing focus to another app.
   controllerStatus: () => ipcRenderer.invoke("codicon:controller-status"),
   setControllerContext: (context) => ipcRenderer.send("codicon:set-controller-context", context),

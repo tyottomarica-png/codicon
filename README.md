@@ -9,7 +9,30 @@ Codicon deliberately **does not host the conversation**. There is no chat panel 
 - **A joystick for Skills** — hold LT, flick, launch a saved workflow (review a PR, debug, refactor).
 - **Command keys** — approve, decline, interrupt, push-to-talk, new agent.
 
-It runs on Linux and macOS, drives Codex through the official `app-server` protocol and Claude Code through the official Claude Agent SDK, and reads the controller at the OS level so every control keeps working while another application is in the foreground.
+It runs on Linux and macOS and reads the controller at the OS level, so every control keeps working while another application is in the foreground.
+
+## Direct control
+
+By default Codicon drives its own agent sessions (Codex over the official `app-server` protocol, Claude Code over the official Agent SDK). **Direct control** points the same rings at the agent you already have open instead — the physical macropad's behaviour, where a key press lands in whatever is in front of you.
+
+Turn it on in **Settings → Direct control**. Two modes:
+
+| Mode | What happens | Permission |
+| --- | --- | --- |
+| `clipboard` | The command is placed on your clipboard; you paste it with ⌘V | **none** |
+| `type` | The command is typed into the frontmost agent | macOS Accessibility |
+
+`type` also needs the optional native backend: `npm install @jitsi/robotjs` (Node-API, prebuilt for macOS and Linux — no compiler).
+
+The guardrails are structural, not advisory:
+
+- **Off by default.** Nothing is ever sent until you turn it on.
+- **One press, one dispatch.** No timers, retries or queues — every send traces to a physical controller edge.
+- **The target is re-checked at the moment of sending.** If you alt-tab to a browser or a password manager between choosing on the ring and releasing the trigger, the send is cancelled rather than typed into it.
+- **A minimum interval between sends**, so a stuck button cannot become a stream of input.
+- Codicon shows exactly what it sent, and why it did not.
+
+What the two CLIs actually accept was measured, not assumed. Claude Code takes an inline argument for `/model`, `/effort` and `/fast`. Codex does **not**: `supports_inline_args()` in `codex-rs/tui/src/slash_command.rs` excludes `Model` and `Permissions`, so `/model` there can only open the picker for you to choose from — Codicon opens it and stops, rather than sending arrow keys that would select the wrong row when the list changes.
 
 日本語の詳しい使い方は [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) を参照してください。
 
