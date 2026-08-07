@@ -105,7 +105,9 @@ class GamepadSource extends EventEmitter {
     if (!config || config.enabled === false) {
       const actions = this.mapper.reset();
       if (actions.length) this.emit("actions", actions);
-      this.#emitSnapshot(EMPTY_SNAPSHOT, true);
+      // Only announce the transition; repeating the empty snapshot 60×/s would re-render the UI
+      // continuously for as long as the controller stays disabled.
+      if (this.lastSnapshot.connected) this.#emitSnapshot(EMPTY_SNAPSHOT, true);
       return;
     }
     let pads = [];

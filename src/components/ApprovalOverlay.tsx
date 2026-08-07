@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from "../hooks/useCodexSession";
+import type { ApprovalRequest } from "../hooks/useAgentSession";
 
 type Props = {
   request: ApprovalRequest;

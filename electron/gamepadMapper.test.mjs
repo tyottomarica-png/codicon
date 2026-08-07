@@ -11,9 +11,11 @@ const BINDINGS = {
   pushToTalk: 5,
   fastMode: 11,
   settings: 9,
+  switchTarget: 8,
+  skillsRing: 6,
 };
 
-const CONFIG = { bindings: BINDINGS, deadzone: 0.42, modelCount: 3, effortCount: 5, enabled: true };
+const CONFIG = { bindings: BINDINGS, deadzone: 0.42, modelCount: 3, effortCount: 5, skillCount: 4, enabled: true };
 
 /** Build one standard-mapped pad with the named buttons held and the given stick positions. */
 function pad({ held = [], left = [0, 0], right = [0, 0] } = {}) {
@@ -130,6 +132,64 @@ describe("controller mapper", () => {
     const controller = createControllerMapper();
     controller.update(pad(), CONFIG);
     expect(types(controller.update(pad({ held: [BINDINGS.cancel] }), CONFIG))).toEqual(["cancel"]);
+  });
+
+  it("cycles the agent target from the view button, with haptic", () => {
+    const controller = createControllerMapper();
+    controller.update(pad(), CONFIG);
+    const result = controller.update(pad({ held: [BINDINGS.switchTarget] }), CONFIG);
+    expect(types(result)).toEqual(["switchTarget"]);
+    expect(result.haptic).toBe(true);
+    // Settings written before this binding existed have no switchTarget entry; that must not throw.
+    const legacy = { ...CONFIG, bindings: { ...BINDINGS, switchTarget: undefined } };
+    expect(types(controller.update(pad({ held: [8] }), legacy))).toEqual([]);
+  });
+
+  it("does not switch target while the wheel is held", () => {
+    const controller = createControllerMapper();
+    controller.update(pad(), CONFIG);
+    controller.update(pad({ held: [BINDINGS.powerWheel] }), CONFIG);
+    expect(types(controller.update(pad({ held: [BINDINGS.powerWheel, BINDINGS.switchTarget] }), CONFIG))).toEqual([]);
+  });
+
+  it("opens, previews, and commits the skills ring on the trigger", () => {
+    const controller = createControllerMapper();
+    controller.update(pad(), CONFIG);
+    expect(types(controller.update(pad({ held: [BINDINGS.skillsRing] }), CONFIG))).toEqual(["skills/open"]);
+    const previewed = controller.update(pad({ held: [BINDINGS.skillsRing], left: [1, 0] }), CONFIG);
+    expect(previewed.actions).toContainEqual({ type: "skills/preview", skillIndex: 1 });
+    expect(types(controller.update(pad(), CONFIG))).toEqual(["skills/commit"]);
+  });
+
+  it("suppresses ordinary buttons while the skills ring is held", () => {
+    const controller = createControllerMapper();
+    controller.update(pad(), CONFIG);
+    controller.update(pad({ held: [BINDINGS.skillsRing] }), CONFIG);
+    const result = controller.update(pad({ held: [BINDINGS.skillsRing, BINDINGS.primary] }), CONFIG);
+    expect(types(result)).not.toContain("primary");
+  });
+
+  it("lets the power ring win when both triggers are held", () => {
+    const controller = createControllerMapper();
+    controller.update(pad(), CONFIG);
+    // Power ring first, then the skills trigger: skills must not open on top of it.
+    controller.update(pad({ held: [BINDINGS.powerWheel] }), CONFIG);
+    expect(types(controller.update(pad({ held: [BINDINGS.powerWheel, BINDINGS.skillsRing] }), CONFIG))).toEqual([]);
+  });
+
+  it("cancels the skills ring with B", () => {
+    const controller = createControllerMapper();
+    controller.update(pad(), CONFIG);
+    controller.update(pad({ held: [BINDINGS.skillsRing] }), CONFIG);
+    expect(types(controller.update(pad({ held: [BINDINGS.skillsRing, BINDINGS.cancel] }), CONFIG))).toEqual(["skills/cancel"]);
+    expect(types(controller.update(pad(), CONFIG))).toEqual([]);
+  });
+
+  it("ignores the skills ring when unbound", () => {
+    const controller = createControllerMapper();
+    const legacy = { ...CONFIG, bindings: { ...BINDINGS, skillsRing: undefined } };
+    controller.update(pad(), legacy);
+    expect(types(controller.update(pad({ held: [6] }), legacy))).toEqual([]);
   });
 
   it("toggles fast mode from the right stick click", () => {

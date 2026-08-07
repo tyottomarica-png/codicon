@@ -1,29 +1,85 @@
 import { useEffect, useState } from "react";
-import type { CodexModel, CodiconSettings, ControllerBindings } from "../types/codicon";
+import type { AgentModel, AgentProvider, CodiconSettings, ControllerBindings, DirectControlMode, DirectStatus } from "../types/codicon";
 
 type Props = {
   open: boolean;
   settings: CodiconSettings;
-  models: CodexModel[];
+  codexModels: AgentModel[];
+  claudeModels: AgentModel[];
   onClose(): void;
-  onChooseWorkspace(): void;
-  onSave(settings: CodiconSettings): Promise<void>;
+  onChooseWorkspace(): Promise<string | null>;
+  onSave(settings: Partial<CodiconSettings>): Promise<void>;
+  direct: DirectStatus | null;
+  onRequestAccessibility(): void;
 };
 
 const BUTTON_NAMES = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "VIEW", "MENU", "LS", "RS", "DPAD ↑", "DPAD ↓", "DPAD ←", "DPAD →"];
 const BINDING_LABELS: Array<[keyof ControllerBindings, string]> = [
   ["primary", "送信 / 承認"], ["cancel", "中断 / 拒否"], ["focusComposer", "キーボード入力"], ["newThread", "新規セッション"],
   ["powerWheel", "Power Ring（ホールド）"], ["pushToTalk", "Push to Talk（ホールド）"], ["settings", "設定パネル"],
-  ["fastMode", "Fast mode 切替"],
+  ["fastMode", "Fast mode 切替"], ["switchTarget", "ターゲット切替"], ["skillsRing", "Skills Ring（ホールド）"],
 ];
 
-export function SettingsPanel({ open, settings, models, onClose, onChooseWorkspace, onSave }: Props) {
+export function SettingsPanel({ open, settings, codexModels, claudeModels, onClose, onChooseWorkspace, onSave, direct, onRequestAccessibility }: Props) {
   const [draft, setDraft] = useState(settings);
-  useEffect(() => setDraft(settings), [settings, open]);
+  // Reset only when the panel opens: mid-edit settings changes (workspace picker, tray toggles)
+  // must not silently discard everything the user has changed in the open panel.
+  useEffect(() => {
+    if (open) setDraft(settings);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!open) return null;
 
+  const chooseWorkspace = async () => {
+    const workspace = await onChooseWorkspace();
+    if (workspace) setDraft((current) => ({ ...current, workspace }));
+  };
+
+  // Save only what this panel edits. Writing the whole draft back would revert concurrent
+  // main-process changes (a VIEW-button target pin, the tray HUD toggle, a dragged HUD position).
+  const save = async () => {
+    await onSave({
+      workspace: draft.workspace,
+      codexPath: draft.codexPath,
+      claudePath: draft.claudePath,
+      controllerEnabled: draft.controllerEnabled,
+      hudEnabled: draft.hudEnabled,
+      quitOnWindowClose: draft.quitOnWindowClose,
+      deadzone: draft.deadzone,
+      permissionMode: draft.permissionMode,
+      target: draft.target,
+      directControl: draft.directControl,
+      providers: draft.providers,
+      skills: draft.skills,
+      bindings: draft.bindings,
+    });
+    onClose();
+  };
+
   const updateBinding = (key: keyof ControllerBindings, value: number) => setDraft({ ...draft, bindings: { ...draft.bindings, [key]: value } });
-  const updateSlot = (index: number, modelId: string) => setDraft({ ...draft, modelSlots: draft.modelSlots.map((slot, slotIndex) => slotIndex === index ? { ...slot, modelId } : slot) });
+  const updateSlot = (provider: AgentProvider, index: number, modelId: string) => setDraft({
+    ...draft,
+    providers: {
+      ...draft.providers,
+      [provider]: {
+        slots: draft.providers[provider].slots.map((slot, slotIndex) => slotIndex === index ? { ...slot, modelId } : slot),
+      },
+    },
+  });
+
+  const slotSection = (provider: AgentProvider, models: AgentModel[]) => (
+    <div className="slot-settings">
+      {draft.providers[provider].slots.map((slot, index) => (
+        <label key={slot.key}>
+          <i style={{ background: slot.color }} />
+          <span>{slot.label}</span>
+          <select value={slot.modelId} onChange={(event) => updateSlot(provider, index, event.target.value)}>
+            {!models.some((model) => model.model === slot.modelId) && <option value={slot.modelId}>{slot.modelId}</option>}
+            {models.map((model) => <option key={model.id} value={model.model}>{model.displayName} — {model.model}</option>)}
+          </select>
+        </label>
+      ))}
+    </div>
+  );
 
   return (
     <div className="overlay-backdrop settings-backdrop" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -31,26 +87,89 @@ export function SettingsPanel({ open, settings, models, onClose, onChooseWorkspa
         <header><div><span>CONFIGURATION</span><h2 id="settings-title">Codicon Settings</h2></div><button className="close-button" onClick={onClose}>×</button></header>
         <div className="settings-scroll">
           <section className="settings-section">
-            <div className="settings-copy"><span>01 / WORKSPACE</span><h3>Codex workspace</h3><p>新しいセッションが読み書きするルートです。</p></div>
-            <button className="path-control" onClick={onChooseWorkspace}><span>{draft.workspace}</span><b>SELECT</b></button>
+            <div className="settings-copy"><span>01 / WORKSPACE</span><h3>Workspace</h3><p>新しいセッションが読み書きするルートです。</p></div>
+            <button className="path-control" onClick={() => void chooseWorkspace()}><span>{draft.workspace}</span><b>SELECT</b></button>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>02 / POWER RING</span><h3>Model presets</h3><p>左スティックの3方向に、よく使うモデルを割り当てます。</p></div>
-            <div className="slot-settings">
-              {draft.modelSlots.map((slot, index) => (
-                <label key={slot.key}><i style={{ background: slot.color }} /><span>{slot.label}</span><select value={slot.modelId} onChange={(event) => updateSlot(index, event.target.value)}>{models.map((model) => <option key={model.id} value={model.model}>{model.displayName} — {model.model}</option>)}</select></label>
-              ))}
+            <div className="settings-copy"><span>02 / TARGET</span><h3>Agent target</h3><p>Auto では前面のアプリ（Claude Code / Codex のタブ）を検出して操作対象を切り替えます。VIEW ボタンでいつでも手動切替できます。</p></div>
+            <div className="segmented-control">
+              <button className={draft.target.mode === "auto" ? "is-active" : ""} onClick={() => setDraft({ ...draft, target: { ...draft.target, mode: "auto" } })}>AUTO</button>
+              <button className={draft.target.mode === "manual" && draft.target.manual === "codex" ? "is-active" : ""} onClick={() => setDraft({ ...draft, target: { mode: "manual", manual: "codex" } })}>CODEX</button>
+              <button className={draft.target.mode === "manual" && draft.target.manual === "claude" ? "is-active" : ""} onClick={() => setDraft({ ...draft, target: { mode: "manual", manual: "claude" } })}>CLAUDE</button>
             </div>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>03 / SAFETY</span><h3>Permission preset</h3><p>危険な操作の承認はPower Ringとは分離されています。</p></div>
+            <div className="settings-copy"><span>03 / CODEX RING</span><h3>Codex model presets</h3><p>Codex ターゲット時に左スティック3方向へ割り当てるモデルです。</p></div>
+            {slotSection("codex", codexModels)}
+          </section>
+          <section className="settings-section">
+            <div className="settings-copy"><span>04 / CLAUDE RING</span><h3>Claude model presets</h3><p>Claude Code ターゲット時の3方向です。effort は low〜max を右スティックで選べます。</p></div>
+            {slotSection("claude", claudeModels)}
+          </section>
+          <section className="settings-section">
+            <div className="settings-copy">
+              <span>05 / DIRECT</span><h3>Direct control</h3>
+              <p>リングでの選択を、Codicon 内のセッションではなく<strong>いま前面で開いている Claude / Codex そのもの</strong>に送ります。物理マクロパッドと同じ動作です。</p>
+            </div>
+            <div className="segmented-control">
+              {([["off", "OFF"], ["clipboard", "CLIPBOARD"], ["type", "TYPE"]] as Array<[DirectControlMode, string]>).map(([mode, label]) => (
+                <button key={mode} className={draft.directControl.mode === mode ? "is-active" : ""} onClick={() => setDraft({ ...draft, directControl: { mode } })}>{label}</button>
+              ))}
+            </div>
+            <p className="settings-note">
+              CLIPBOARD はコマンドをクリップボードに置くだけで、OS の権限は一切不要です（⌘V で貼り付け）。
+              TYPE は実際にキー入力を送るため、macOS の「アクセシビリティ」許可が必要です。
+              いずれのモードでも、送信直前に前面アプリが対象エージェントであることを再確認し、違えば送信を中止します。
+            </p>
+            {draft.directControl.mode === "type" && (
+              <div className="direct-status">
+                <div className={direct?.typingAvailable ? "is-ok" : "is-missing"}>
+                  <i />入力モジュール: {direct?.typingAvailable ? "利用可能" : "未インストール（npm install @jitsi/robotjs）"}
+                </div>
+                <div className={direct?.accessibilityTrusted ? "is-ok" : "is-missing"}>
+                  <i />アクセシビリティ許可: {direct?.accessibilityTrusted ? "許可済み" : "未許可"}
+                  {!direct?.accessibilityTrusted && <button className="direct-grant" onClick={onRequestAccessibility}>許可を求める</button>}
+                </div>
+              </div>
+            )}
+          </section>
+          <section className="settings-section">
+            <div className="settings-copy"><span>06 / SKILLS</span><h3>Skills ring</h3><p>LTを押しながら左スティックで選び、離すと現在のチャットに送られます。よく使う作業を登録してください。</p></div>
+            <div className="skill-settings">
+              {draft.skills.map((skill, index) => (
+                <div className="skill-row" key={skill.id}>
+                  <i style={{ background: skill.color }} />
+                  <input
+                    className="text-control skill-label"
+                    value={skill.label}
+                    onChange={(event) => setDraft({ ...draft, skills: draft.skills.map((entry, at) => at === index ? { ...entry, label: event.target.value } : entry) })}
+                  />
+                  <textarea
+                    className="text-control skill-prompt"
+                    rows={2}
+                    value={skill.prompt}
+                    onChange={(event) => setDraft({ ...draft, skills: draft.skills.map((entry, at) => at === index ? { ...entry, prompt: event.target.value } : entry) })}
+                  />
+                  <button className="skill-remove" onClick={() => setDraft({ ...draft, skills: draft.skills.filter((_, at) => at !== index) })} aria-label="Remove skill">×</button>
+                </div>
+              ))}
+              <button
+                className="skill-add"
+                onClick={() => setDraft({ ...draft, skills: [...draft.skills, { id: `skill-${Date.now()}`, label: "NEW SKILL", prompt: "", color: "#8d9692" }] })}
+              >
+                + スキルを追加
+              </button>
+            </div>
+          </section>
+          <section className="settings-section">
+            <div className="settings-copy"><span>07 / SAFETY</span><h3>Permission preset</h3><p>危険な操作の承認はPower Ringとは分離されています。Claude では read-only は plan モードに対応します。</p></div>
             <div className="segmented-control">
               {(["read-only", "auto", "full"] as const).map((mode) => <button key={mode} className={draft.permissionMode === mode ? "is-active" : ""} onClick={() => setDraft({ ...draft, permissionMode: mode })}>{mode === "read-only" ? "READ ONLY" : mode === "auto" ? "AUTO" : "FULL ACCESS"}</button>)}
             </div>
             {draft.permissionMode === "full" && <p className="danger-note">Full Access はサンドボックス外の操作を許します。信頼できるリポジトリだけで使用してください。</p>}
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>04 / CONTROLLER</span><h3>Xbox mappings</h3><p>標準Gamepadマッピングに対するボタン番号です。</p></div>
+            <div className="settings-copy"><span>08 / CONTROLLER</span><h3>Controller mappings</h3><p>標準Gamepadマッピングに対するボタン番号です。</p></div>
             <label className="range-control"><span>Stick deadzone <b>{draft.deadzone.toFixed(2)}</b></span><input type="range" min="0.18" max="0.72" step="0.02" value={draft.deadzone} onChange={(event) => setDraft({ ...draft, deadzone: Number(event.target.value) })} /></label>
             <div className="controller-toggle"><span>Controller input</span><button className={draft.controllerEnabled ? "is-active" : ""} onClick={() => setDraft({ ...draft, controllerEnabled: !draft.controllerEnabled })}>{draft.controllerEnabled ? "ENABLED" : "DISABLED"}</button></div>
             <div className="binding-grid">
@@ -58,17 +177,20 @@ export function SettingsPanel({ open, settings, models, onClose, onChooseWorkspa
             </div>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>05 / BACKGROUND</span><h3>Background operation</h3><p>コントローラ入力はメインプロセスで読み取るため、Codex や Claude Code を前面にしていても動作します。</p></div>
+            <div className="settings-copy"><span>09 / BACKGROUND</span><h3>Background operation</h3><p>コントローラ入力はメインプロセスで読み取るため、他のアプリを前面にしていても動作します。</p></div>
             <div className="controller-toggle"><span>Status overlay</span><button className={draft.hudEnabled ? "is-active" : ""} onClick={() => setDraft({ ...draft, hudEnabled: !draft.hudEnabled })}>{draft.hudEnabled ? "ENABLED" : "DISABLED"}</button></div>
             <div className="controller-toggle"><span>Close window quits Codicon</span><button className={draft.quitOnWindowClose ? "is-active" : ""} onClick={() => setDraft({ ...draft, quitOnWindowClose: !draft.quitOnWindowClose })}>{draft.quitOnWindowClose ? "QUIT" : "STAY RESIDENT"}</button></div>
             <p className="settings-note">STAY RESIDENT ではウィンドウを閉じてもセッションは終了せず、メニューバーのアイコンから復帰できます。</p>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>06 / RUNTIME</span><h3>Codex CLI</h3><p>空欄の場合はPATH上のcodexを使用します。変更は再起動後に反映されます。</p></div>
-            <input className="text-control" value={draft.codexPath} placeholder="codex" onChange={(event) => setDraft({ ...draft, codexPath: event.target.value })} />
+            <div className="settings-copy"><span>10 / RUNTIME</span><h3>CLI paths</h3><p>空欄の場合、Codex は PATH 上の codex、Claude は SDK 同梱のバイナリを使用します。変更は再起動後に反映されます。</p></div>
+            <div className="runtime-paths">
+              <label><span>codex</span><input className="text-control" value={draft.codexPath} placeholder="codex" onChange={(event) => setDraft({ ...draft, codexPath: event.target.value })} /></label>
+              <label><span>claude</span><input className="text-control" value={draft.claudePath} placeholder="(SDK bundled)" onChange={(event) => setDraft({ ...draft, claudePath: event.target.value })} /></label>
+            </div>
           </section>
         </div>
-        <footer><button className="button-ghost" onClick={onClose}>キャンセル</button><button className="button-primary" onClick={async () => { await onSave(draft); onClose(); }}>設定を保存</button></footer>
+        <footer><button className="button-ghost" onClick={onClose}>キャンセル</button><button className="button-primary" onClick={() => void save()}>設定を保存</button></footer>
       </div>
     </div>
   );

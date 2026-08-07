@@ -1,25 +1,50 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session, Tray } = require("electron");
-const { spawn, execFileSync } = require("node:child_process");
-const { EventEmitter } = require("node:events");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, screen, session, systemPreferences, Tray } = require("electron");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const readline = require("node:readline");
+const { CodexAgent } = require("./agents/codexAgent.cjs");
+const { ClaudeAgent } = require("./agents/claudeAgent.cjs");
+const { FocusTracker } = require("./focusTracker.cjs");
 const { GamepadSource } = require("./gamepadSource.cjs");
+const { InputBridge } = require("./inputBridge.cjs");
+const { planKeystrokes } = require("./keystrokePlan.cjs");
 
 const DEFAULT_SETTINGS = {
   workspace: "",
   codexPath: "",
+  claudePath: "",
   controllerEnabled: true,
   hudEnabled: true,
   hudBounds: null,
   quitOnWindowClose: false,
   deadzone: 0.42,
   permissionMode: "auto",
-  modelSlots: [
-    { key: "sol", label: "SOL", modelId: "gpt-5.6-sol", color: "#ff7a59" },
-    { key: "terra", label: "TERRA", modelId: "gpt-5.6-terra", color: "#9bd6bd" },
-    { key: "luna", label: "LUNA", modelId: "gpt-5.6-luna", color: "#9ba7ff" },
+  target: { mode: "auto", manual: "codex" },
+  // Direct control: drive the agent already open in another app instead of Codicon's own session.
+  // "off" until the user opts in; "clipboard" needs no OS permission, "type" needs Accessibility.
+  directControl: { mode: "off" },
+  providers: {
+    codex: {
+      slots: [
+        { key: "sol", label: "SOL", modelId: "gpt-5.6-sol", color: "#ff7a59" },
+        { key: "terra", label: "TERRA", modelId: "gpt-5.6-terra", color: "#9bd6bd" },
+        { key: "luna", label: "LUNA", modelId: "gpt-5.6-luna", color: "#9ba7ff" },
+      ],
+    },
+    claude: {
+      slots: [
+        { key: "fable", label: "FABLE", modelId: "claude-fable-5", color: "#d97757" },
+        { key: "opus", label: "OPUS", modelId: "opus", color: "#9bd6bd" },
+        { key: "sonnet", label: "SONNET", modelId: "sonnet", color: "#9ba7ff" },
+      ],
+    },
+  },
+  skills: [
+    { id: "review", label: "REVIEW PR", prompt: "Review the current branch's changes and report defects, ranked by severity.", color: "#9bd6bd" },
+    { id: "debug", label: "DEBUG", prompt: "Reproduce and diagnose the most recent error, then propose the smallest correct fix.", color: "#ff7a59" },
+    { id: "refactor", label: "REFACTOR", prompt: "Simplify the code I last touched without changing its behaviour, and explain each change.", color: "#9ba7ff" },
+    { id: "test", label: "TESTS", prompt: "Add the tests that would have caught the most recent bug, and run them.", color: "#daa04f" },
   ],
   bindings: {
     primary: 0,
@@ -30,161 +55,28 @@ const DEFAULT_SETTINGS = {
     pushToTalk: 5,
     fastMode: 11,
     settings: 9,
+    switchTarget: 8,
+    skillsRing: 6,
   },
 };
 
-class CodexBridge extends EventEmitter {
-  constructor(getBinary) {
-    super();
-    this.getBinary = getBinary;
-    this.proc = null;
-    this.pending = new Map();
-    this.requestId = 1;
-    this.starting = null;
-    this.ready = false;
-  }
-
-  async start() {
-    if (this.ready && this.proc) return;
-    if (this.starting) return this.starting;
-    this.starting = new Promise((resolve, reject) => {
-      const binary = this.getBinary();
-      const proc = spawn(binary, ["app-server", "--stdio", "--enable", "realtime_conversation"], {
-        cwd: process.cwd(),
-        env: process.env,
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      this.proc = proc;
-      let settled = false;
-      const fail = (error) => {
-        if (!settled) {
-          settled = true;
-          reject(error);
-        }
-      };
-      proc.once("error", (error) => fail(new Error(`Codex CLI を起動できません: ${error.message}`)));
-      proc.stderr.setEncoding("utf8");
-      proc.stderr.on("data", (chunk) => this.emit("log", String(chunk)));
-      const rl = readline.createInterface({ input: proc.stdout });
-      rl.on("line", (line) => this.handleLine(line));
-      proc.on("exit", (code, signal) => {
-        const error = new Error(`Codex app-server が終了しました (code=${code}, signal=${signal || "none"})`);
-        this.ready = false;
-        this.proc = null;
-        for (const { reject: rejectPending, timer } of this.pending.values()) {
-          clearTimeout(timer);
-          rejectPending(error);
-        }
-        this.pending.clear();
-        this.emit("exit", { code, signal });
-        fail(error);
-      });
-      this.request("initialize", {
-        clientInfo: { name: "codicon", title: "Codicon", version: app.getVersion() },
-        capabilities: { experimentalApi: true },
-      }, 20000)
-        .then(() => {
-          this.notify("initialized");
-          this.ready = true;
-          settled = true;
-          resolve();
-        })
-        .catch(fail);
-    }).finally(() => {
-      this.starting = null;
-    });
-    return this.starting;
-  }
-
-  handleLine(line) {
-    let message;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      this.emit("log", `Invalid app-server JSON: ${line}`);
-      return;
-    }
-    if (Object.prototype.hasOwnProperty.call(message, "id") && !message.method) {
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      clearTimeout(pending.timer);
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message || JSON.stringify(message.error)));
-      else pending.resolve(message.result);
-      return;
-    }
-    if (Object.prototype.hasOwnProperty.call(message, "id") && message.method) {
-      if (message.method === "currentTime/read") {
-        this.respond(message.id, { currentTimeAt: Math.floor(Date.now() / 1000) });
-        return;
-      }
-      if (message.method === "account/chatgptAuthTokens/refresh" || message.method === "attestation/generate") {
-        this.respondError(message.id, -32601, `${message.method} is not provided by Codicon`);
-        return;
-      }
-      this.emit("server-request", message);
-      return;
-    }
-    if (message.method) this.emit("notification", message);
-  }
-
-  send(message) {
-    if (!this.proc?.stdin?.writable) throw new Error("Codex app-server に接続されていません");
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`);
-  }
-
-  request(method, params = {}, timeoutMs = 30000) {
-    const id = this.requestId++;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`${method} が ${timeoutMs / 1000} 秒でタイムアウトしました`));
-      }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      try {
-        this.send({ method, id, params });
-      } catch (error) {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        reject(error);
-      }
-    });
-  }
-
-  notify(method, params) {
-    this.send(params === undefined ? { method } : { method, params });
-  }
-
-  respond(id, result) {
-    this.send({ id, result });
-  }
-
-  respondError(id, code, message) {
-    this.send({ id, error: { code, message } });
-  }
-
-  stop() {
-    if (this.proc && !this.proc.killed) this.proc.kill("SIGTERM");
-    this.proc = null;
-    this.ready = false;
-  }
-}
-
 let mainWindow = null;
 let hudWindow = null;
+let wheelWindow = null;
 let tray = null;
 let isQuitting = false;
 let settingsCache = null;
 
 // The ring sizes depend on the model list the renderer loaded, so the renderer publishes them up
-// to the main process where the controller edge detection now lives.
-let controllerContext = { modelCount: 3, effortCount: 5 };
+// to the main process where the controller edge detection lives.
+let controllerContext = { modelCount: 3, effortCount: 5, skillCount: 4 };
 
-// Last state the main window published for the overlay. Cached so a HUD opened later, or reopened
-// after being toggled off, renders something immediately instead of waiting for the next change.
+// Last states the main window published for the overlay windows. Cached so an overlay opened
+// later renders something immediately instead of waiting for the next change.
 let hudState = {
   connection: "connecting",
+  target: "codex",
+  targetSource: "fallback",
   model: "",
   effort: "",
   serviceTier: null,
@@ -192,10 +84,36 @@ let hudState = {
   voiceActive: false,
   approvalPending: false,
   controller: false,
+  agentsRunning: 0,
+  agentsWaiting: 0,
+  agentsTotal: 0,
 };
+let wheelState = { open: false };
 
 function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
+}
+
+/** Merge stored settings over defaults, migrating the pre-multi-agent shape. */
+function upgradeSettings(stored, defaults) {
+  const next = {
+    ...defaults,
+    ...stored,
+    target: { ...defaults.target, ...(stored.target || {}) },
+    directControl: { ...defaults.directControl, ...(stored.directControl || {}) },
+    bindings: { ...defaults.bindings, ...(stored.bindings || {}) },
+    providers: {
+      codex: { slots: stored.providers?.codex?.slots?.length ? stored.providers.codex.slots : defaults.providers.codex.slots },
+      claude: { slots: stored.providers?.claude?.slots?.length ? stored.providers.claude.slots : defaults.providers.claude.slots },
+    },
+    skills: Array.isArray(stored.skills) && stored.skills.length ? stored.skills : defaults.skills,
+  };
+  // v0.1 kept the codex slots at the top level.
+  if (Array.isArray(stored.modelSlots) && !stored.providers) {
+    next.providers.codex.slots = stored.modelSlots;
+  }
+  delete next.modelSlots;
+  return next;
 }
 
 function loadSettings() {
@@ -206,12 +124,7 @@ function loadSettings() {
   };
   try {
     const stored = JSON.parse(fs.readFileSync(settingsPath(), "utf8"));
-    settingsCache = {
-      ...defaults,
-      ...stored,
-      bindings: { ...defaults.bindings, ...(stored.bindings || {}) },
-      modelSlots: Array.isArray(stored.modelSlots) ? stored.modelSlots : defaults.modelSlots,
-    };
+    settingsCache = upgradeSettings(stored, defaults);
   } catch {
     settingsCache = structuredClone(defaults);
   }
@@ -220,11 +133,7 @@ function loadSettings() {
 
 function saveSettings(next) {
   const current = loadSettings();
-  settingsCache = {
-    ...current,
-    ...next,
-    bindings: { ...current.bindings, ...(next.bindings || {}) },
-  };
+  settingsCache = upgradeSettings({ ...current, ...next }, current);
   fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
   fs.writeFileSync(settingsPath(), `${JSON.stringify(settingsCache, null, 2)}\n`, { mode: 0o600 });
   return settingsCache;
@@ -258,16 +167,18 @@ function resolveCodexBinary() {
   return "codex";
 }
 
-const bridge = new CodexBridge(resolveCodexBinary);
+const agents = {
+  codex: new CodexAgent({ getBinary: resolveCodexBinary, getVersion: () => app.getVersion() }),
+  claude: new ClaudeAgent({ getSettings: loadSettings }),
+};
 
 function broadcast(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
-bridge.on("notification", (message) => broadcast("codex:event", { kind: "notification", ...message }));
-bridge.on("server-request", (message) => broadcast("codex:event", { kind: "request", ...message }));
-bridge.on("log", (message) => broadcast("codex:event", { kind: "log", message }));
-bridge.on("exit", (details) => broadcast("codex:event", { kind: "exit", details }));
+for (const agent of Object.values(agents)) {
+  agent.on("event", (event) => broadcast("agent:event", event));
+}
 
 const gamepad = new GamepadSource(() => {
   const settings = loadSettings();
@@ -277,10 +188,17 @@ const gamepad = new GamepadSource(() => {
     deadzone: settings.deadzone,
     modelCount: controllerContext.modelCount,
     effortCount: controllerContext.effortCount,
+    skillCount: controllerContext.skillCount,
   };
 });
 
-gamepad.on("actions", (actions) => broadcast("controller:actions", actions));
+gamepad.on("actions", (actions) => {
+  // Target switching is main-process state; everything else belongs to the session renderer.
+  for (const action of actions) {
+    if (action.type === "switchTarget") cycleTarget();
+  }
+  broadcast("controller:actions", actions);
+});
 gamepad.on("snapshot", (snapshot) => broadcast("controller:snapshot", snapshot));
 gamepad.on("status", (status) => {
   broadcast("controller:status", status);
@@ -288,173 +206,37 @@ gamepad.on("status", (status) => {
   refreshTrayMenu();
 });
 
-function permissionSettings(mode, workspace) {
-  if (mode === "read-only") {
-    return { approvalPolicy: "on-request", sandbox: "read-only" };
-  }
-  if (mode === "full") {
-    return { approvalPolicy: "on-request", sandbox: "danger-full-access" };
-  }
-  return { approvalPolicy: "on-request", sandbox: "workspace-write", cwd: workspace };
+const focusTracker = new FocusTracker({ getMode: () => loadSettings().target });
+
+const inputBridge = new InputBridge({
+  getSettings: loadSettings,
+  // The detected agent, not the resolved target: a manual pin must never make Codicon type into
+  // an app that is not actually that agent.
+  getFrontApp: () => ({ agent: focusTracker.state.detected, name: focusTracker.state.app }),
+  clipboard,
+  systemPreferences,
+});
+
+function currentTarget() {
+  return focusTracker.state;
 }
 
-async function ensureBridge() {
-  await bridge.start();
+focusTracker.on("change", (state) => {
+  broadcast("target:changed", state);
+  publishHudState({ target: state.target, targetSource: state.source });
+  refreshTrayMenu();
+});
+
+function setTarget(target) {
+  saveSettings({ target });
+  void focusTracker.poll();
+  return currentTarget();
 }
 
-function registerIpc() {
-  ipcMain.handle("codicon:bootstrap", async () => {
-    await ensureBridge();
-    const safe = async (method, params = {}) => {
-      try {
-        return await bridge.request(method, params);
-      } catch (error) {
-        return { error: error.message };
-      }
-    };
-    const [models, account, config, threads] = await Promise.all([
-      safe("model/list", { includeHidden: false, limit: 100 }),
-      safe("account/read", { refreshToken: false }),
-      safe("config/read", { includeLayers: false, cwd: loadSettings().workspace }),
-      safe("thread/list", { limit: 30, sortKey: "recency_at", sortDirection: "desc" }),
-    ]);
-    return {
-      platform: process.platform,
-      version: app.getVersion(),
-      codexPath: resolveCodexBinary(),
-      settings: loadSettings(),
-      models,
-      account,
-      config,
-      threads,
-    };
-  });
-
-  ipcMain.handle("codicon:choose-workspace", async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: "Codex のワークスペースを選択",
-      defaultPath: loadSettings().workspace,
-      properties: ["openDirectory", "createDirectory"],
-    });
-    if (result.canceled || !result.filePaths[0]) return null;
-    saveSettings({ workspace: result.filePaths[0] });
-    return result.filePaths[0];
-  });
-
-  ipcMain.handle("codicon:get-settings", () => loadSettings());
-  ipcMain.handle("codicon:save-settings", (_event, next) => {
-    const saved = saveSettings(next || {});
-    syncHudWindow();
-    return saved;
-  });
-  ipcMain.handle("codicon:restart-server", async () => {
-    bridge.stop();
-    await ensureBridge();
-    return true;
-  });
-  ipcMain.handle("codicon:start-thread", async (_event, options) => {
-    await ensureBridge();
-    const settings = loadSettings();
-    const workspace = options?.cwd || settings.workspace;
-    const security = permissionSettings(settings.permissionMode, workspace);
-    const result = await bridge.request("thread/start", {
-      model: options?.model || null,
-      serviceTier: options?.serviceTier || null,
-      cwd: workspace,
-      approvalPolicy: security.approvalPolicy,
-      sandbox: security.sandbox,
-    });
-    if (options?.effort && result?.thread?.id) {
-      await bridge.request("thread/settings/update", {
-        threadId: result.thread.id,
-        model: options.model,
-        effort: options.effort,
-        serviceTier: options.serviceTier || null,
-      });
-    }
-    return result;
-  });
-  ipcMain.handle("codicon:resume-thread", async (_event, threadId) => {
-    await ensureBridge();
-    return bridge.request("thread/resume", { threadId });
-  });
-  ipcMain.handle("codicon:list-threads", async () => {
-    await ensureBridge();
-    return bridge.request("thread/list", { limit: 30, sortKey: "recency_at", sortDirection: "desc" });
-  });
-  ipcMain.handle("codicon:send-message", async (_event, payload) => {
-    await ensureBridge();
-    const input = [{ type: "text", text: payload.text, text_elements: [] }];
-    if (payload.activeTurnId) {
-      return bridge.request("turn/steer", {
-        threadId: payload.threadId,
-        expectedTurnId: payload.activeTurnId,
-        input,
-      });
-    }
-    return bridge.request("turn/start", {
-      threadId: payload.threadId,
-      input,
-      model: payload.model || null,
-      effort: payload.effort || null,
-      serviceTier: payload.serviceTier || null,
-    });
-  });
-  ipcMain.handle("codicon:update-power", async (_event, payload) => {
-    await ensureBridge();
-    if (!payload.threadId) return {};
-    return bridge.request("thread/settings/update", {
-      threadId: payload.threadId,
-      model: payload.model,
-      effort: payload.effort,
-      serviceTier: payload.serviceTier || null,
-    });
-  });
-  ipcMain.handle("codicon:interrupt", async (_event, payload) => {
-    await ensureBridge();
-    return bridge.request("turn/interrupt", { threadId: payload.threadId, turnId: payload.turnId });
-  });
-  ipcMain.handle("codicon:respond", async (_event, payload) => {
-    await ensureBridge();
-    bridge.respond(payload.id, payload.result);
-    return true;
-  });
-  ipcMain.handle("codicon:voice-start", async (_event, threadId) => {
-    await ensureBridge();
-    return bridge.request("thread/realtime/start", {
-      threadId,
-      outputModality: "text",
-      includeStartupContext: true,
-      flushTranscriptTailOnSessionEnd: true,
-      version: "v1",
-    }, 45000);
-  });
-  ipcMain.handle("codicon:voice-audio", async (_event, payload) => {
-    await ensureBridge();
-    return bridge.request("thread/realtime/appendAudio", {
-      threadId: payload.threadId,
-      audio: payload.audio,
-    });
-  });
-  ipcMain.handle("codicon:voice-stop", async (_event, threadId) => {
-    await ensureBridge();
-    return bridge.request("thread/realtime/stop", { threadId }, 45000);
-  });
-
-  ipcMain.handle("codicon:controller-status", () => gamepad.status);
-  ipcMain.on("codicon:set-controller-context", (_event, context) => {
-    controllerContext = {
-      modelCount: Math.max(1, Number(context?.modelCount) || controllerContext.modelCount),
-      effortCount: Math.max(1, Number(context?.effortCount) || controllerContext.effortCount),
-    };
-  });
-  ipcMain.on("codicon:publish-hud-state", (_event, patch) => publishHudState(patch || {}));
-  ipcMain.handle("codicon:hud-state", () => hudState);
-  ipcMain.handle("codicon:set-hud-enabled", (_event, enabled) => {
-    setHudEnabled(Boolean(enabled));
-    return Boolean(enabled);
-  });
-  ipcMain.on("codicon:show-main-window", () => showMainWindow());
+function cycleTarget() {
+  const settings = loadSettings();
+  const next = currentTarget().target === "codex" ? "claude" : "codex";
+  return setTarget({ ...settings.target, mode: "manual", manual: next });
 }
 
 function hardenWindow(window) {
@@ -488,23 +270,23 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      // Codex keeps streaming while you work in another app, so the window that owns the session
-      // must keep its timers running at full rate even when it is not the foreground window.
+      // The agent session lives in this renderer and keeps streaming while another app owns the
+      // foreground, so its timers must not be throttled when hidden.
       backgroundThrottling: false,
     },
   });
   loadRenderer(mainWindow, null);
   hardenWindow(mainWindow);
-  // Hide rather than close. The Codex thread, its history, and the controller wiring all live in
-  // this renderer, so destroying the window would end the session that background input exists to
-  // keep driving. Only do this when the tray can bring it back.
+  // Hide rather than close. The agent threads, their history, and the controller wiring all live
+  // in this renderer, so destroying the window would end the sessions that background input exists
+  // to keep driving. Only do this when the tray can bring it back.
   mainWindow.on("close", (event) => {
     if (isQuitting || loadSettings().quitOnWindowClose || !tray || tray.isDestroyed()) return;
     event.preventDefault();
     mainWindow.hide();
   });
   // Getting here means the close was deliberately allowed above, so there is no way back to the
-  // session and no reason to keep the process (or a lone HUD) running.
+  // session and no reason to keep the process (or a lone overlay) running.
   mainWindow.on("closed", () => {
     mainWindow = null;
     if (!isQuitting) {
@@ -541,6 +323,16 @@ function hudStartBounds() {
   return visible ? bounds : fallback;
 }
 
+function overlayWebPreferences() {
+  return {
+    preload: path.join(__dirname, "preload.cjs"),
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+    backgroundThrottling: false,
+  };
+}
+
 function createHud() {
   if (hudWindow && !hudWindow.isDestroyed()) {
     hudWindow.showInactive();
@@ -557,17 +349,11 @@ function createHud() {
     fullscreenable: false,
     hasShadow: false,
     skipTaskbar: true,
-    // Never take keyboard focus. The whole point is that Codex or Claude Code stays focused while
-    // the overlay reports what Codicon is doing.
+    // Never take keyboard focus: the point is that Codex or Claude Code stays focused while the
+    // overlay reports what Codicon is doing.
     focusable: false,
     backgroundColor: "#00000000",
-    webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      backgroundThrottling: false,
-    },
+    webPreferences: overlayWebPreferences(),
   });
   // "screen-saver" is the level that also floats above macOS fullscreen spaces.
   hudWindow.setAlwaysOnTop(true, "screen-saver");
@@ -619,6 +405,62 @@ function publishHudState(patch) {
   if (hudWindow && !hudWindow.isDestroyed()) hudWindow.webContents.send("hud:state", hudState);
 }
 
+// The standalone power-wheel overlay: same design as the in-app wheel, shown centred on the
+// display the user is working on, so LB works identically while Codex or Claude Code is frontmost.
+function createWheelWindow() {
+  if (wheelWindow && !wheelWindow.isDestroyed()) return wheelWindow;
+  wheelWindow = new BrowserWindow({
+    width: 640,
+    height: 640,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    hasShadow: false,
+    skipTaskbar: true,
+    focusable: false,
+    backgroundColor: "#00000000",
+    webPreferences: overlayWebPreferences(),
+  });
+  wheelWindow.setAlwaysOnTop(true, "screen-saver");
+  wheelWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // Purely visual: clicks pass through to the app underneath.
+  wheelWindow.setIgnoreMouseEvents(true);
+  loadRenderer(wheelWindow, "wheel");
+  hardenWindow(wheelWindow);
+  wheelWindow.on("closed", () => {
+    wheelWindow = null;
+  });
+  return wheelWindow;
+}
+
+function centerWheelOnActiveDisplay() {
+  if (!wheelWindow || wheelWindow.isDestroyed()) return;
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const [width, height] = wheelWindow.getSize();
+  wheelWindow.setPosition(
+    Math.round(display.workArea.x + (display.workArea.width - width) / 2),
+    Math.round(display.workArea.y + (display.workArea.height - height) / 2),
+  );
+}
+
+function publishWheelState(state) {
+  wheelState = state || { open: false };
+  if (!wheelWindow || wheelWindow.isDestroyed()) return;
+  wheelWindow.webContents.send("wheel:state", wheelState);
+  // The overlay only appears when the main window cannot show the wheel itself.
+  const mainVisible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused();
+  if (wheelState.open && !mainVisible) {
+    centerWheelOnActiveDisplay();
+    wheelWindow.showInactive();
+  } else if (!wheelState.open && wheelWindow.isVisible()) {
+    wheelWindow.hide();
+  }
+}
+
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   else {
@@ -631,24 +473,43 @@ function showMainWindow() {
 function refreshTrayMenu() {
   if (!tray || tray.isDestroyed()) return;
   const status = gamepad.status;
+  const settings = loadSettings();
+  const target = currentTarget();
   const controllerLine = !status.available
     ? `Controller: unavailable (${status.reason || "unknown"})`
     : status.connected
       ? `Controller: ${status.id || "connected"}`
       : "Controller: waiting for a gamepad";
-  tray.setToolTip(`Codicon — ${controllerLine}`);
+  const targetLine = `Target: ${target.target.toUpperCase()} (${target.source})`;
+  tray.setToolTip(`Codicon — ${targetLine}`);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: controllerLine, enabled: false },
+    { label: targetLine, enabled: false },
+    { type: "separator" },
     {
-      label: status.backgroundEvents ? "Background input: on" : "Background input: off",
-      enabled: false,
+      label: "Target: Auto (follow focus)",
+      type: "radio",
+      checked: settings.target.mode === "auto",
+      click: () => setTarget({ ...settings.target, mode: "auto" }),
+    },
+    {
+      label: "Target: Codex",
+      type: "radio",
+      checked: settings.target.mode === "manual" && settings.target.manual === "codex",
+      click: () => setTarget({ mode: "manual", manual: "codex" }),
+    },
+    {
+      label: "Target: Claude Code",
+      type: "radio",
+      checked: settings.target.mode === "manual" && settings.target.manual === "claude",
+      click: () => setTarget({ mode: "manual", manual: "claude" }),
     },
     { type: "separator" },
     { label: "Open Codicon", click: () => showMainWindow() },
     {
       label: "Show status overlay",
       type: "checkbox",
-      checked: Boolean(loadSettings().hudEnabled),
+      checked: Boolean(settings.hudEnabled),
       click: (item) => setHudEnabled(item.checked),
     },
     { type: "separator" },
@@ -673,6 +534,104 @@ function createTray() {
   return tray;
 }
 
+function agentFor(provider) {
+  const agent = agents[provider];
+  if (!agent) throw new Error(`Unknown agent provider: ${provider}`);
+  return agent;
+}
+
+function registerIpc() {
+  ipcMain.handle("codicon:bootstrap", async () => {
+    const settings = loadSettings();
+    const context = { workspace: settings.workspace };
+    const [codex, claude] = await Promise.all([
+      agents.codex.bootstrap(context),
+      agents.claude.bootstrap(context),
+    ]);
+    return {
+      platform: process.platform,
+      version: app.getVersion(),
+      codexPath: resolveCodexBinary(),
+      settings,
+      providers: { codex, claude },
+    };
+  });
+
+  ipcMain.handle("codicon:choose-workspace", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "ワークスペースを選択",
+      defaultPath: loadSettings().workspace,
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    saveSettings({ workspace: result.filePaths[0] });
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle("codicon:get-settings", () => loadSettings());
+  ipcMain.handle("codicon:save-settings", (_event, next) => {
+    const saved = saveSettings(next || {});
+    syncHudWindow();
+    void focusTracker.poll();
+    return saved;
+  });
+  ipcMain.handle("codicon:restart-server", async () => {
+    agents.codex.stop();
+    agents.claude.stop();
+    await agents.codex.ensureStarted();
+    return true;
+  });
+
+  ipcMain.handle("agent:start-thread", (_event, { provider, ...payload }) => {
+    const settings = loadSettings();
+    return agentFor(provider).startThread({ ...payload, cwd: settings.workspace, permissionMode: settings.permissionMode });
+  });
+  ipcMain.handle("agent:send", (_event, { provider, ...payload }) => agentFor(provider).sendMessage(payload));
+  ipcMain.handle("agent:update-power", (_event, { provider, ...payload }) => agentFor(provider).updatePower(payload));
+  ipcMain.handle("agent:interrupt", (_event, { provider, ...payload }) => agentFor(provider).interrupt(payload));
+  ipcMain.handle("agent:respond", (_event, { provider, ...payload }) => agentFor(provider).respond(payload));
+  ipcMain.handle("agent:resume-thread", (_event, { provider, threadId }) => agentFor(provider).resumeThread(threadId));
+  ipcMain.handle("agent:close-thread", (_event, { provider, threadId }) => agentFor(provider).closeThread(threadId));
+  ipcMain.handle("agent:list-threads", (_event, provider) => agentFor(provider).listThreads());
+  ipcMain.handle("agent:voice-start", (_event, { provider, threadId }) => agentFor(provider).voiceStart(threadId));
+  ipcMain.handle("agent:voice-audio", (_event, { provider, ...payload }) => agentFor(provider).voiceAudio(payload));
+  ipcMain.handle("agent:voice-stop", (_event, { provider, threadId }) => agentFor(provider).voiceStop(threadId));
+
+  ipcMain.handle("codicon:get-target", () => currentTarget());
+  ipcMain.handle("codicon:set-target", (_event, target) => setTarget(target));
+  ipcMain.handle("codicon:cycle-target", () => cycleTarget());
+
+  ipcMain.handle("codicon:direct-status", () => inputBridge.status());
+  ipcMain.handle("codicon:request-accessibility", () => {
+    // Opens the standard macOS prompt; the user grants it in System Settings.
+    inputBridge.isTrusted(true);
+    return inputBridge.status();
+  });
+  ipcMain.handle("codicon:direct-dispatch", (_event, { provider, action, value }) => {
+    const plan = planKeystrokes({ provider, action, value });
+    const result = inputBridge.dispatch(plan, { provider });
+    broadcast("direct:result", result);
+    return result;
+  });
+
+  ipcMain.handle("codicon:controller-status", () => gamepad.status);
+  ipcMain.on("codicon:set-controller-context", (_event, context) => {
+    controllerContext = {
+      modelCount: Math.max(1, Number(context?.modelCount) || controllerContext.modelCount),
+      effortCount: Math.max(1, Number(context?.effortCount) || controllerContext.effortCount),
+      skillCount: Math.max(1, Number(context?.skillCount) || controllerContext.skillCount),
+    };
+  });
+  ipcMain.on("codicon:publish-hud-state", (_event, patch) => publishHudState(patch || {}));
+  ipcMain.handle("codicon:hud-state", () => hudState);
+  ipcMain.handle("codicon:set-hud-enabled", (_event, enabled) => {
+    setHudEnabled(Boolean(enabled));
+    return Boolean(enabled);
+  });
+  ipcMain.on("codicon:publish-wheel-state", (_event, state) => publishWheelState(state));
+  ipcMain.on("codicon:show-main-window", () => showMainWindow());
+}
+
 app.whenReady().then(() => {
   const isTrustedRenderer = (webContents) => {
     const url = webContents?.getURL() || "";
@@ -685,9 +644,11 @@ app.whenReady().then(() => {
   registerIpc();
   createWindow();
   createTray();
+  createWheelWindow();
   if (loadSettings().hudEnabled) createHud();
+  focusTracker.start();
   // Loading SDL takes a moment and is not needed to draw the first frame, so it starts after the
-  // window exists. A failure here only downgrades the renderer to focus-limited input.
+  // window exists. A failure here only means no controller input.
   void gamepad.start().then(refreshTrayMenu);
   app.on("activate", () => {
     if (!mainWindow || mainWindow.isDestroyed()) createWindow();
@@ -698,15 +659,20 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
   isQuitting = true;
   gamepad.stop();
-  bridge.stop();
+  focusTracker.stop();
+  agents.codex.stop();
+  agents.claude.stop();
   destroyHud();
+  if (wheelWindow && !wheelWindow.isDestroyed()) wheelWindow.destroy();
+  wheelWindow = null;
   if (tray && !tray.isDestroyed()) tray.destroy();
   tray = null;
 });
 
 // Reached only when nothing can bring Codicon back — no tray, or the user opted into
-// quitOnWindowClose. Staying alive then would leave an invisible process holding a Codex session.
+// quitOnWindowClose. Staying alive then would leave an invisible process holding live sessions.
 app.on("window-all-closed", () => {
-  bridge.stop();
+  agents.codex.stop();
+  agents.claude.stop();
   app.quit();
 });
