@@ -1,6 +1,6 @@
 # Codicon
 
-Codicon is a controller-first desktop control surface for OpenAI Codex. It runs on Linux and macOS, talks to the local Codex CLI through the official `app-server` protocol, and uses the standard Web Gamepad API for Xbox controllers.
+Codicon is a controller-first desktop control surface for **Claude Code and OpenAI Codex**. It runs on Linux and macOS, drives Codex through the official `app-server` protocol and Claude Code through the official Claude Agent SDK, and reads Xbox-compatible controllers at the OS level so everything keeps working while another application is in the foreground.
 
 日本語の詳しい使い方は [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) を参照してください。
 
@@ -11,15 +11,38 @@ Codicon is a controller-first desktop control surface for OpenAI Codex. It runs 
 | Hold **LB** + left stick | Select one of the three model presets |
 | Hold **LB** + right stick | Select a supported reasoning effort |
 | Release **LB** | Commit both selections |
-| Hold **RB** | Push to Talk; speech is sent through Codex realtime voice |
-| Click **RS** | Toggle the model's Fast service tier without changing reasoning effort |
+| Hold **RB** | Push to Talk; speech is sent through Codex realtime voice (Codex target only) |
+| Click **RS** | Toggle Fast mode without changing reasoning effort |
+| **VIEW** | Switch the target agent (Codex ⇄ Claude Code) |
 | **A** | Send the typed prompt, or approve the current request |
 | **B** | Interrupt the active turn, decline an approval, or cancel the ring |
 | **X** | Focus the text composer |
-| **Y** | Start a fresh session (the old Codex thread remains in history) |
+| **Y** | Start a fresh session (the old thread remains in history) |
 | **Menu** | Open settings |
 
-The model ring is populated from `model/list`; it does not assume that model names or reasoning options will stay fixed. The three directions are presets and can be reassigned in Settings.
+The model ring is populated live from each backend — `model/list` for Codex, `supportedModels()` for Claude Code — so new models appear without an app update. Each backend has its own three presets, reassignable in Settings.
+
+## Two agents, one controller
+
+Codicon runs a session per backend and the controller drives the **active target**:
+
+- **Auto targeting** — a focus tracker watches which application is frontmost. Working in a terminal tab running `claude`? The controller drives the Claude session. Switch to a `codex` tab, and it drives Codex. The Claude desktop app counts as a Claude context. Detection layers: frontmost app (no permissions, via LaunchServices) → active-tab tty and its foreground process (one-time Automation prompt for Terminal/iTerm2) → a global scan of interactive terminal processes when only one agent is running.
+- **Manual override** — the VIEW button, the status-bar badge, the menu bar item, or Settings pin the target to one backend.
+- The **power ring appears over whatever app you are using**: holding LB while Codicon is in the background opens the same radial selector in a click-through, always-on-top overlay centred on your display, driven entirely by the sticks.
+
+Feature mapping per backend:
+
+| | Codex | Claude Code |
+| --- | --- | --- |
+| Model ring | `model/list` | `supportedModels()` (Fable / Opus / Sonnet / Haiku…) |
+| Effort ring | reasoning efforts from the model | `low / medium / high / xhigh / max` |
+| Fast toggle | `priority` service tier | `/fast` flag setting (Opus models) |
+| Approvals | app-server approval requests | `canUseTool` permission callback |
+| Voice (RB) | realtime voice API | not available |
+| Interrupt | `turn/interrupt` | `interrupt()` control request |
+| Sessions | app-server threads | `~/.claude` sessions, resumable |
+
+Claude Code uses your existing `claude login` (subscription); Codex uses your existing `codex login`. Codicon never handles API keys.
 
 ## Background operation
 
@@ -35,15 +58,18 @@ The status bar shows a `BG` badge while background input is live, and `INPUT OFF
 
 - Linux (x64/arm64) or macOS (Apple Silicon/Intel)
 - Node.js 22 or newer for development
-- A current `codex` CLI available on `PATH`, signed in with `codex login`
-- An Xbox-compatible controller using a standard browser gamepad mapping
-- Microphone permission for Push to Talk
+- For the Codex backend: a current `codex` CLI on `PATH`, signed in with `codex login`
+- For the Claude Code backend: signed in with `claude login` (the CLI binary itself ships with the app via the Agent SDK)
+- An Xbox-compatible controller
+- Microphone permission for Push to Talk (Codex voice)
 
-Check the CLI before starting:
+Either backend alone is enough — the other simply shows as unavailable with the reason.
+
+Check the CLIs before starting:
 
 ```bash
 codex --version
-codex doctor
+claude --version
 ```
 
 ## Install
@@ -103,18 +129,18 @@ Pushing a version tag such as `v0.1.2` runs the native Linux and macOS packaging
 
 ## Architecture
 
-- `electron/main.cjs` starts `codex app-server` over JSONL stdio, owns privileged filesystem/process access, and forwards a narrow IPC surface.
-- `electron/preload.cjs` exposes only the operations used by the renderer; Node integration remains disabled.
+- `electron/agents/codexAgent.cjs` speaks the `codex app-server` JSONL protocol; `electron/agents/claudeAgent.cjs` drives a streaming-input Claude Agent SDK session per thread. Both translate their native streams into one provider-neutral event schema, so the renderer cannot tell the backends apart.
+- `electron/focusTracker.cjs` detects the frontmost app and, for terminals, the active tab's foreground process, to auto-select the target backend.
 - `electron/gamepadSource.cjs` reads the controller over SDL at 60 Hz with background events enabled, and `electron/gamepadMapper.cjs` is the pure state machine that turns raw samples into edge-triggered actions with deadzone filtering and haptic ticks.
-- `src/hooks/useGamepad.ts` subscribes to those actions over IPC; the renderer does no polling, so losing focus and Chromium's background throttling cannot stall the controller.
-- `src/lib/audio.ts` converts microphone samples to 24 kHz mono PCM16 frames for `thread/realtime/appendAudio`.
-- The renderer follows the app-server thread/turn/item lifecycle and handles command/file approval requests explicitly.
+- `electron/main.cjs` owns the windows (main, status HUD, wheel overlay), the tray, target resolution, and a narrow provider-parameterized IPC surface; `electron/preload.cjs` exposes only those operations.
+- `src/hooks/useAgentSession.ts` holds one session's state per backend, driven purely by the normalized events; `src/hooks/useGamepad.ts` subscribes to controller actions — the renderer does no polling, so losing focus and Chromium's background throttling cannot stall the controller.
+- `src/lib/audio.ts` converts microphone samples to 24 kHz mono PCM16 frames for Codex `thread/realtime/appendAudio`.
 
 Realtime voice and `thread/settings/update` are currently experimental Codex app-server surfaces. Codicon enables the `realtime_conversation` feature when it starts app-server and presents failures without silently falling back to a separate API key.
 
 ## Safety
 
-The default permission preset is **Auto** (`workspace-write` with `on-request` approvals). Approval requests are shown in a modal that maps A to one-time approval and B to decline. Full Access is only selectable in Settings and is never activated by the model ring.
+The default permission preset is **Auto** — `workspace-write` with `on-request` approvals on Codex, and the default permission mode with a `canUseTool` prompt on Claude Code. Approval requests from either backend are shown in the same modal, mapping A to one-time approval and B to decline. **Read Only** maps to Codex's read-only sandbox and Claude Code's plan mode. **Full Access** (`danger-full-access` / `bypassPermissions`) is only selectable in Settings and is never activated by the model ring.
 
 ## License
 

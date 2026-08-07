@@ -11,6 +11,7 @@ const BINDINGS = {
   pushToTalk: 5,
   fastMode: 11,
   settings: 9,
+  switchTarget: 8,
 };
 
 const CONFIG = { bindings: BINDINGS, deadzone: 0.42, modelCount: 3, effortCount: 5, enabled: true };
@@ -130,6 +131,24 @@ describe("controller mapper", () => {
     const controller = createControllerMapper();
     controller.update(pad(), CONFIG);
     expect(types(controller.update(pad({ held: [BINDINGS.cancel] }), CONFIG))).toEqual(["cancel"]);
+  });
+
+  it("cycles the agent target from the view button, with haptic", () => {
+    const controller = createControllerMapper();
+    controller.update(pad(), CONFIG);
+    const result = controller.update(pad({ held: [BINDINGS.switchTarget] }), CONFIG);
+    expect(types(result)).toEqual(["switchTarget"]);
+    expect(result.haptic).toBe(true);
+    // Settings written before this binding existed have no switchTarget entry; that must not throw.
+    const legacy = { ...CONFIG, bindings: { ...BINDINGS, switchTarget: undefined } };
+    expect(types(controller.update(pad({ held: [8] }), legacy))).toEqual([]);
+  });
+
+  it("does not switch target while the wheel is held", () => {
+    const controller = createControllerMapper();
+    controller.update(pad(), CONFIG);
+    controller.update(pad({ held: [BINDINGS.powerWheel] }), CONFIG);
+    expect(types(controller.update(pad({ held: [BINDINGS.powerWheel, BINDINGS.switchTarget] }), CONFIG))).toEqual([]);
   });
 
   it("toggles fast mode from the right stick click", () => {

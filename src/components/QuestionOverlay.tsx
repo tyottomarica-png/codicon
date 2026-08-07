@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { UserInputRequest } from "../hooks/useCodexSession";
+import type { UserInputRequest } from "../hooks/useAgentSession";
 
 type Props = {
   request: UserInputRequest;

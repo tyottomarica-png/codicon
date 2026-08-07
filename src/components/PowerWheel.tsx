@@ -1,10 +1,10 @@
 import { annularSectorPath, effortLabel, polarPoint } from "../lib/radial";
-import type { CodexModel, ModelSlot } from "../types/codicon";
+import type { AgentModel, ModelSlot } from "../types/codicon";
 import type { CSSProperties } from "react";
 
 type Props = {
   slots: ModelSlot[];
-  models: CodexModel[];
+  models: AgentModel[];
   selectedSlot: number;
   selectedEffort: string;
   previewSlot: number | null;
@@ -15,16 +15,22 @@ type Props = {
   onSelectEffort(effort: string): void;
 };
 
-function modelForSlot(slot: ModelSlot, models: CodexModel[]): CodexModel | undefined {
+function modelForSlot(slot: ModelSlot | undefined, models: AgentModel[]): AgentModel | undefined {
+  if (!slot) return undefined;
   return models.find((model) => model.model === slot.modelId || model.id === slot.modelId);
 }
 
+function shortModelName(value: string): string {
+  return value.replace(/^(gpt-|claude-)/, "");
+}
+
 export function PowerWheel({ slots, models, selectedSlot, selectedEffort, previewSlot, previewEffort, open, serviceTier, onSelectSlot, onSelectEffort }: Props) {
-  const activeSlot = previewSlot ?? selectedSlot;
-  const model = modelForSlot(slots[activeSlot], models);
-  const efforts = model?.supportedReasoningEfforts || [];
+  const activeSlot = Math.min(previewSlot ?? selectedSlot, Math.max(0, slots.length - 1));
+  const slot = slots[activeSlot];
+  const model = modelForSlot(slot, models);
+  const efforts = model?.efforts || [];
   const activeEffort = previewEffort ?? selectedEffort;
-  const modelSpan = 360 / slots.length;
+  const modelSpan = slots.length ? 360 / slots.length : 360;
   const effortSpan = efforts.length ? 360 / efforts.length : 360;
 
   return (
@@ -38,25 +44,25 @@ export function PowerWheel({ slots, models, selectedSlot, selectedEffort, previe
           const start = index * effortSpan - effortSpan / 2;
           const end = start + effortSpan;
           const labelPoint = polarPoint(205, index * effortSpan);
-          const active = option.reasoningEffort === activeEffort;
+          const active = option.id === activeEffort;
           return (
-            <g key={option.reasoningEffort} className={`effort-sector ${active ? "is-active" : ""}`} onClick={() => onSelectEffort(option.reasoningEffort)} role="button" tabIndex={0}>
+            <g key={option.id} className={`effort-sector ${active ? "is-active" : ""}`} onClick={() => onSelectEffort(option.id)} role="button" tabIndex={0}>
               <path d={annularSectorPath(177, 230, start + 2, end - 2)} />
-              <text x={labelPoint.x} y={labelPoint.y} textAnchor="middle" dominantBaseline="middle">{effortLabel(option.reasoningEffort)}</text>
+              <text x={labelPoint.x} y={labelPoint.y} textAnchor="middle" dominantBaseline="middle">{effortLabel(option.id)}</text>
             </g>
           );
         })}
-        {slots.map((slot, index) => {
-          const slotModel = modelForSlot(slot, models);
+        {slots.map((entry, index) => {
+          const slotModel = modelForSlot(entry, models);
           const start = index * modelSpan - modelSpan / 2;
           const end = start + modelSpan;
           const labelPoint = polarPoint(130, index * modelSpan);
           const active = index === activeSlot;
           return (
-            <g key={slot.key} className={`model-sector ${active ? "is-active" : ""}`} style={{ "--slot-color": slot.color } as CSSProperties} onClick={() => onSelectSlot(index)} role="button" tabIndex={0}>
+            <g key={entry.key} className={`model-sector ${active ? "is-active" : ""}`} style={{ "--slot-color": entry.color } as CSSProperties} onClick={() => onSelectSlot(index)} role="button" tabIndex={0}>
               <path d={annularSectorPath(73, 168, start + 2, end - 2)} />
-              <text x={labelPoint.x} y={labelPoint.y - 6} textAnchor="middle" dominantBaseline="middle">{slot.label}</text>
-              <text className="model-sector-sub" x={labelPoint.x} y={labelPoint.y + 13} textAnchor="middle" dominantBaseline="middle">{slotModel?.model.replace("gpt-", "") || slot.modelId.replace("gpt-", "")}</text>
+              <text x={labelPoint.x} y={labelPoint.y - 6} textAnchor="middle" dominantBaseline="middle">{entry.label}</text>
+              <text className="model-sector-sub" x={labelPoint.x} y={labelPoint.y + 13} textAnchor="middle" dominantBaseline="middle">{shortModelName(slotModel?.model || entry.modelId)}</text>
             </g>
           );
         })}
@@ -67,7 +73,7 @@ export function PowerWheel({ slots, models, selectedSlot, selectedEffort, previe
       </svg>
       <div className="wheel-readout">
         <span className="readout-index">0{activeSlot + 1}</span>
-        <span className="readout-model">{model?.displayName || slots[activeSlot].label}</span>
+        <span className="readout-model">{model?.displayName || slot?.label || "—"}</span>
         <span className="readout-separator">/</span>
         <span className="readout-effort">{effortLabel(activeEffort)}</span>
       </div>
