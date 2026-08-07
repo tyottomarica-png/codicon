@@ -259,6 +259,10 @@ class ClaudeAgent extends EventEmitter {
     const options = {
       cwd: settings.workspace || undefined,
       includePartialMessages: true,
+      // Fast mode refuses to serve SDK sessions without this opt-in — the session reports
+      // fast_mode_disabled_reason "sdk_opt_in_required" and applyFlagSettings({fastMode}) is a
+      // silent no-op. This is the flag-settings layer, so it does not touch the user's own files.
+      settings: { fastModePerSessionOptIn: true },
       ...claudePermissionOptions(settings.permissionMode),
       canUseTool: (toolName, input, callbackOptions) => this.handlePermission(toolName, input, callbackOptions),
       stderr: (line) => this.emitEvent({ kind: "log", message: String(line) }),
