@@ -1,4 +1,4 @@
-import type { ActivityItem } from "../hooks/useCodexSession";
+import type { ActivityItem } from "../hooks/useAgentSession";
 import type { ThreadSummary } from "../types/codicon";
 
 type Props = {

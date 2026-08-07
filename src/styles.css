@@ -84,6 +84,18 @@ body {
 .gamepad-state.is-offline .gamepad-glyph { color: var(--danger); }
 .background-badge { padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 7px; font-weight: 720; letter-spacing: .12em; color: var(--green); }
 
+.target-badge { display: flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: rgba(255,255,255,.03); color: var(--muted); cursor: pointer; font-size: 9px; letter-spacing: .12em; }
+.target-badge:hover { background: rgba(255,255,255,.07); }
+.target-badge i { width: 6px; height: 6px; border-radius: 50%; }
+.target-badge strong { color: var(--ink); font-weight: 780; }
+.target-badge small { font-size: 7px; color: var(--faint); letter-spacing: .1em; }
+.target-badge.target-codex i { background: #74d5a2; box-shadow: 0 0 7px rgba(116,213,162,.6); }
+.target-badge.target-claude i { background: #d97757; box-shadow: 0 0 7px rgba(217,119,87,.6); }
+
+.provider-warning { position: absolute; top: 54px; left: 18px; right: 18px; z-index: 3; padding: 10px 14px; border: 1px solid rgba(255,95,99,.4); border-radius: 9px; background: rgba(40,18,18,.92); }
+.provider-warning strong { display: block; font-size: 10px; letter-spacing: .1em; color: #ffb3b0; }
+.provider-warning p { margin: 4px 0 0; font-size: 9px; line-height: 1.5; color: #d3a29b; word-break: break-all; }
+
 .app-grid {
   min-height: 0;
   display: grid;
@@ -273,6 +285,8 @@ select:focus, .text-control:focus { border-color: rgba(255,118,87,.45); }
 .segmented-control button.is-active { background: rgba(255,255,255,.08); color: var(--ink); }
 .danger-note { grid-column: 2; margin: -12px 0 0; color: #d39383; font-size: 8px; line-height: 1.5; }
 .settings-note { grid-column: 2; margin: -6px 0 0; color: var(--faint); font-size: 8px; line-height: 1.5; }
+.runtime-paths { display: grid; gap: 10px; }
+.runtime-paths label { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 10px; color: var(--muted); font-size: 9px; letter-spacing: .08em; }
 .range-control { display: grid; gap: 8px; color: var(--muted); font-size: 9px; }
 .range-control span { display: flex; justify-content: space-between; }
 .range-control b { color: var(--ink); }
@@ -338,7 +352,25 @@ select:focus, .text-control:focus { border-color: rgba(255,118,87,.45); }
 
 .hud.tone-approval { border-color: rgba(255, 196, 107, .5); }
 
+.hud-target { padding: 2px 7px; border-radius: 5px; font-size: 7px; font-weight: 780; letter-spacing: .13em; }
+.hud-target.target-codex { background: rgba(116,213,162,.14); color: #9fe7c2; }
+.hud-target.target-claude { background: rgba(217,119,87,.16); color: #f0a68c; }
+.hud-source { margin-left: auto; }
+
 @keyframes hud-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* Standalone power-wheel overlay window (shown over other apps while LB is held). */
+.wheel-body { background: transparent; }
+.wheel-body #root { display: grid; place-items: center; height: 100%; }
+.wheel-overlay { position: relative; width: 600px; height: 600px; display: grid; place-items: center; opacity: 0; transition: opacity .12s ease; }
+.wheel-overlay.is-open { opacity: 1; }
+.wheel-overlay .power-wheel-shell { width: 100%; height: 100%; padding: 24px; }
+.wheel-overlay .power-wheel-shell::after { display: none; }
+.wheel-overlay .power-wheel { filter: drop-shadow(0 30px 70px rgba(0,0,0,.65)) drop-shadow(0 0 34px rgba(0,0,0,.5)); }
+.wheel-overlay .wheel-instruction { display: none; }
+.wheel-overlay-target { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); z-index: 2; padding: 5px 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: rgba(14,17,18,.92); font-size: 9px; font-weight: 780; letter-spacing: .16em; color: var(--ink); }
+.wheel-overlay-target.target-claude { border-color: rgba(217,119,87,.55); color: #f0a68c; }
+.wheel-overlay-target.target-codex { border-color: rgba(116,213,162,.5); color: #9fe7c2; }
 
 @media (max-width: 1180px) {
   .app-grid { grid-template-columns: minmax(400px,.9fr) minmax(430px,1.1fr); }

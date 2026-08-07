@@ -1,19 +1,30 @@
-import type { ControllerStatus, GamepadSnapshot } from "../types/codicon";
+import type { ControllerStatus, GamepadSnapshot, TargetState } from "../types/codicon";
+import type { SessionConnection } from "../hooks/useAgentSession";
 
 type Props = {
-  connection: "connecting" | "ready" | "error" | "preview";
+  connection: SessionConnection;
   gamepad: GamepadSnapshot;
   controller: ControllerStatus;
+  target: TargetState;
   workspace: string;
   onWorkspace(): void;
+  onCycleTarget(): void;
 };
 
-export function StatusBar({ connection, gamepad, controller, workspace, onWorkspace }: Props) {
-  const connectionLabel = connection === "ready" ? "CODEX ONLINE" : connection === "preview" ? "DESIGN PREVIEW" : connection === "error" ? "CODEX OFFLINE" : "CONNECTING";
-  const gamepadLabel = !controller.available ? "INPUT OFFLINE" : gamepad.connected ? "XBOX READY" : "NO GAMEPAD";
+const CONNECTION_LABELS: Record<SessionConnection, string> = {
+  ready: "AGENT ONLINE",
+  preview: "DESIGN PREVIEW",
+  error: "AGENT OFFLINE",
+  unavailable: "AGENT UNAVAILABLE",
+  connecting: "CONNECTING",
+};
+
+export function StatusBar({ connection, gamepad, controller, target, workspace, onWorkspace, onCycleTarget }: Props) {
+  const gamepadLabel = !controller.available ? "INPUT OFFLINE" : gamepad.connected ? "PAD READY" : "NO GAMEPAD";
   const gamepadTitle = !controller.available
     ? `Controller input unavailable: ${controller.reason || "unknown"}`
     : gamepad.id || "No controller";
+  const sourceLabel = target.source === "manual" ? "MANUAL" : target.source === "auto" ? `AUTO · ${target.app || "?"}` : target.source === "sticky" ? "AUTO · LAST" : "DEFAULT";
   return (
     <header className="status-bar">
       <div className="wordmark"><span className="wordmark-mark">C</span><span>CODICON</span><small>CONTROL SURFACE</small></div>
@@ -22,7 +33,16 @@ export function StatusBar({ connection, gamepad, controller, workspace, onWorksp
         <span className="workspace-label">{workspace.split(/[\\/]/).filter(Boolean).at(-1) || workspace}</span>
       </button>
       <div className="status-cluster">
-        <span className={`connection-state state-${connection}`}><i />{connectionLabel}</span>
+        <button
+          className={`target-badge target-${target.target}`}
+          onClick={onCycleTarget}
+          title={`操作対象を切り替え (VIEW ボタン) — 現在: ${target.target} / ${sourceLabel}`}
+        >
+          <i />
+          <strong>{target.target === "claude" ? "CLAUDE" : "CODEX"}</strong>
+          <small>{sourceLabel}</small>
+        </button>
+        <span className={`connection-state state-${connection}`}><i />{CONNECTION_LABELS[connection]}</span>
         <span className={`gamepad-state ${gamepad.connected ? "is-connected" : ""} ${controller.available ? "" : "is-offline"}`} title={gamepadTitle}>
           <span className="gamepad-glyph">⌁</span>{gamepadLabel}
         </span>

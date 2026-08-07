@@ -138,6 +138,10 @@ function createControllerMapper() {
         if (justPressed(bindings.focusComposer)) actions.push({ type: "focusComposer" });
         if (justPressed(bindings.newThread)) actions.push({ type: "newThread" });
         if (justPressed(bindings.settings)) actions.push({ type: "settings" });
+        if (bindings.switchTarget !== undefined && justPressed(bindings.switchTarget)) {
+          actions.push({ type: "switchTarget" });
+          haptic = true;
+        }
         if (justPressed(bindings.pushToTalk) && !pushToTalkActive) {
           pushToTalkActive = true;
           actions.push({ type: "pushToTalk/start" });

@@ -16,6 +16,8 @@ type GamepadActions = {
   onPushToTalkStart(): void;
   onPushToTalkStop(): void;
   onFastToggle(): void;
+  /** Optional: the target cycle itself happens in the main process; this is for UI feedback. */
+  onSwitchTarget?(): void;
 };
 
 const EMPTY_SNAPSHOT: GamepadSnapshot = { connected: false, id: "", left: [0, 0], right: [0, 0] };
@@ -76,6 +78,7 @@ export function useGamepad(
         case "pushToTalk/start": handlers.onPushToTalkStart(); break;
         case "pushToTalk/stop": handlers.onPushToTalkStop(); break;
         case "fastToggle": handlers.onFastToggle(); break;
+        case "switchTarget": handlers.onSwitchTarget?.(); break;
       }
     };
 
