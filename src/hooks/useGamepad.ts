@@ -1,13 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { sectorFromAxes } from "../lib/radial";
-import type { CodiconSettings } from "../types/codicon";
+import type { CodiconSettings, ControllerAction, ControllerStatus, GamepadSnapshot } from "../types/codicon";
 
-export type GamepadSnapshot = {
-  connected: boolean;
-  id: string;
-  left: [number, number];
-  right: [number, number];
-};
+export type { GamepadSnapshot } from "../types/codicon";
 
 type GamepadActions = {
   onWheelOpen(): void;
@@ -26,91 +20,82 @@ type GamepadActions = {
 
 const EMPTY_SNAPSHOT: GamepadSnapshot = { connected: false, id: "", left: [0, 0], right: [0, 0] };
 
-function pulse(gamepad: Gamepad | null): void {
-  const actuator = gamepad?.vibrationActuator as GamepadHapticActuator | null | undefined;
-  actuator?.playEffect?.("dual-rumble", { duration: 38, strongMagnitude: 0.14, weakMagnitude: 0.34 }).catch(() => undefined);
-}
+const PREVIEW_STATUS: ControllerStatus = {
+  available: false,
+  reason: "Design preview runs without the Electron main process",
+  connected: false,
+  id: "",
+  backgroundEvents: false,
+};
 
-export function useGamepad(settings: CodiconSettings | null, modelCount: number, effortCount: number, actions: GamepadActions): GamepadSnapshot {
+export type ControllerState = {
+  snapshot: GamepadSnapshot;
+  status: ControllerStatus;
+};
+
+/**
+ * Bridges the main process controller reader to the session callbacks.
+ *
+ * The polling deliberately does not live here. `navigator.getGamepads()` only reports to a focused
+ * document and Chromium throttles background renderers, so a hook that polled would stop the
+ * moment you switched to Codex or Claude Code. The main process reads the device over SDL and
+ * sends already-debounced semantic actions; this hook only dispatches them.
+ */
+export function useGamepad(
+  settings: CodiconSettings | null,
+  modelCount: number,
+  effortCount: number,
+  actions: GamepadActions,
+): ControllerState {
   const [snapshot, setSnapshot] = useState<GamepadSnapshot>(EMPTY_SNAPSHOT);
+  const [status, setStatus] = useState<ControllerStatus>(PREVIEW_STATUS);
   const actionsRef = useRef(actions);
-  const previousButtons = useRef<boolean[]>([]);
-  const wheelOpen = useRef(false);
-  const previousPreview = useRef("null:null");
   actionsRef.current = actions;
 
+  // The ring sizes come from the loaded model list, which only the renderer knows.
   useEffect(() => {
-    if (!settings?.controllerEnabled) {
-      setSnapshot(EMPTY_SNAPSHOT);
-      return;
-    }
-    let animationFrame = 0;
-    const tick = () => {
-      const gamepad = [...navigator.getGamepads()].find((candidate): candidate is Gamepad => Boolean(candidate?.connected && candidate.mapping === "standard"))
-        || [...navigator.getGamepads()].find((candidate): candidate is Gamepad => Boolean(candidate?.connected))
-        || null;
-      if (!gamepad) {
-        if (wheelOpen.current) actionsRef.current.onWheelCancel();
-        wheelOpen.current = false;
-        previousButtons.current = [];
-        setSnapshot((current) => (current.connected ? EMPTY_SNAPSHOT : current));
-        animationFrame = requestAnimationFrame(tick);
-        return;
-      }
-      const pressed = gamepad.buttons.map((button) => button.pressed);
-      const wasPressed = previousButtons.current;
-      const justPressed = (index: number) => pressed[index] && !wasPressed[index];
-      const justReleased = (index: number) => !pressed[index] && wasPressed[index];
-      const binding = settings.bindings;
-      const left: [number, number] = [gamepad.axes[0] || 0, gamepad.axes[1] || 0];
-      const right: [number, number] = [gamepad.axes[2] || 0, gamepad.axes[3] || 0];
+    window.codicon?.setControllerContext({ modelCount, effortCount });
+  }, [modelCount, effortCount]);
 
-      if (justPressed(binding.powerWheel)) {
-        wheelOpen.current = true;
-        previousPreview.current = "null:null";
-        actionsRef.current.onWheelOpen();
-        pulse(gamepad);
+  useEffect(() => {
+    const codicon = window.codicon;
+    if (!codicon) return;
+
+    const dispatch = (action: ControllerAction) => {
+      const handlers = actionsRef.current;
+      switch (action.type) {
+        case "wheel/open": handlers.onWheelOpen(); break;
+        case "wheel/preview": handlers.onWheelPreview(action.modelIndex, action.effortIndex); break;
+        case "wheel/commit": handlers.onWheelCommit(); break;
+        case "wheel/cancel": handlers.onWheelCancel(); break;
+        case "primary": handlers.onPrimary(); break;
+        case "cancel": handlers.onCancel(); break;
+        case "focusComposer": handlers.onFocusComposer(); break;
+        case "newThread": handlers.onNewThread(); break;
+        case "settings": handlers.onSettings(); break;
+        case "pushToTalk/start": handlers.onPushToTalkStart(); break;
+        case "pushToTalk/stop": handlers.onPushToTalkStop(); break;
+        case "fastToggle": handlers.onFastToggle(); break;
       }
-      if (wheelOpen.current && pressed[binding.powerWheel]) {
-        const modelIndex = sectorFromAxes(left[0], left[1], modelCount, settings.deadzone);
-        const effortIndex = sectorFromAxes(right[0], right[1], effortCount, settings.deadzone);
-        const previewKey = `${modelIndex}:${effortIndex}`;
-        if (previewKey !== previousPreview.current) {
-          previousPreview.current = previewKey;
-          actionsRef.current.onWheelPreview(modelIndex, effortIndex);
-          if (modelIndex !== null || effortIndex !== null) pulse(gamepad);
-        }
-      }
-      if (wheelOpen.current && justReleased(binding.powerWheel)) {
-        wheelOpen.current = false;
-        actionsRef.current.onWheelCommit();
-        pulse(gamepad);
-      }
-      if (justPressed(binding.fastMode)) {
-        actionsRef.current.onFastToggle();
-        pulse(gamepad);
-      }
-      if (justPressed(binding.cancel)) {
-        if (wheelOpen.current) {
-          wheelOpen.current = false;
-          actionsRef.current.onWheelCancel();
-        } else actionsRef.current.onCancel();
-      }
-      if (!wheelOpen.current) {
-        if (justPressed(binding.primary)) actionsRef.current.onPrimary();
-        if (justPressed(binding.focusComposer)) actionsRef.current.onFocusComposer();
-        if (justPressed(binding.newThread)) actionsRef.current.onNewThread();
-        if (justPressed(binding.settings)) actionsRef.current.onSettings();
-        if (justPressed(binding.pushToTalk)) actionsRef.current.onPushToTalkStart();
-        if (justReleased(binding.pushToTalk)) actionsRef.current.onPushToTalkStop();
-      }
-      previousButtons.current = pressed;
-      setSnapshot({ connected: true, id: gamepad.id, left, right });
-      animationFrame = requestAnimationFrame(tick);
     };
-    animationFrame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animationFrame);
-  }, [settings, modelCount, effortCount]);
 
-  return snapshot;
+    const unsubscribeActions = codicon.onControllerActions((batch) => batch.forEach(dispatch));
+    const unsubscribeSnapshot = codicon.onControllerSnapshot(setSnapshot);
+    const unsubscribeStatus = codicon.onControllerStatus(setStatus);
+    void codicon.controllerStatus().then(setStatus).catch(() => undefined);
+
+    return () => {
+      unsubscribeActions();
+      unsubscribeSnapshot();
+      unsubscribeStatus();
+    };
+  }, []);
+
+  // Disabling the controller in Settings is enforced in the main process; mirror it here so the
+  // status bar stops claiming a controller is live.
+  useEffect(() => {
+    if (settings && !settings.controllerEnabled) setSnapshot(EMPTY_SNAPSHOT);
+  }, [settings]);
+
+  return { snapshot, status };
 }

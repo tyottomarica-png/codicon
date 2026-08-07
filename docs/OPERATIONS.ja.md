@@ -46,6 +46,26 @@ RBを押し続けて話し、話し終えたら離します。マイク入力は
 
 すべてのボタン割り当てとスティックのデッドゾーンは Settings > Xbox mappings で変更できます。スティックドリフトが強い場合は deadzone を上げてください。コントローラ操作を完全に無効化するスイッチもあります。
 
+## 背景で動かす
+
+Codicon はコントローラ入力を Electron のメインプロセスで SDL 経由で直接読み取ります。ブラウザの Gamepad API と違いフォーカスを必要としないため、**Codex CLI や Claude Code のウィンドウを前面にしたままでも、上記のボタン操作はすべて効きます**。
+
+- ステータスバーに `BG` バッジが出ていれば、背景入力が有効です。
+- メニューバー（Linux ではトレイ）のアイコンからウィンドウの表示/非表示、オーバーレイの切り替え、終了ができます。
+- ウィンドウを閉じてもセッションは終了せず、常駐状態になります。完全に終了するにはメニューバーの Quit を使ってください。この挙動は Settings > Background operation で変更できます。
+
+### ステータスオーバーレイ
+
+小さなオーバーレイが常に最前面に表示され、現在のモデル・推論量・ターンの状態（WORKING / LISTENING / NEEDS APPROVAL）を示します。フォーカスを奪わないので、他のアプリでの入力を妨げません。ドラッグで移動でき、位置は記憶されます。⤢ ボタンでメインウィンドウを前面に戻せます。
+
+macOS のフルスクリーン領域の上にも表示されます。不要な場合は Settings > Background operation か、メニューバーのチェックボックスから消せます。
+
+### macOS の権限
+
+macOS がコントローラ入力をアプリに渡すために、**システム設定 > プライバシーとセキュリティ > 入力監視** で Codicon を許可する必要がある場合があります。ステータスバーが `INPUT OFFLINE` のまま、またはボタンが背景でだけ効かない場合はここを確認してください。
+
+なお macOS 15.4 には背景でのコントローラ入力が壊れる不具合がありましたが、[Apple により 15.5 で修正済み](https://developer.apple.com/forums/thread/780929)です。15.4 を使っている場合はアップデートしてください。
+
 ## 承認と安全設定
 
 既定は `Auto` です。Codex はワークスペース内を読み書きでき、外部ネットワークや範囲外の操作では承認を求めます。
@@ -69,12 +89,13 @@ chmod +x Codicon-0.1.0-linux-x86_64.AppImage
 ./Codicon-0.1.0-linux-x86_64.AppImage
 ```
 
-macOS の DMG/ZIP は macOS 上で `npm run dist:mac` を実行するか、同梱の GitHub Actions workflow から生成します。x64 と arm64 の両方が生成されます。第三者へ配布する際は Apple Developer ID 署名と notarization を設定してください。
+macOS の DMG/ZIP は macOS 上で `npm run dist:mac` を実行するか、同梱の GitHub Actions workflow から生成します。SDL のネイティブバイナリはインストール時にそのマシンのアーキテクチャ向けに取得されるため、`dist:mac` は**実行したマシンのアーキテクチャ分だけ**を生成します。x64 と arm64 の両方が必要な場合は、workflow が Apple Silicon と Intel のランナーでそれぞれビルドします。第三者へ配布する際は Apple Developer ID 署名と notarization を設定してください。
 
 ## トラブルシューティング
 
 - `CODEX OFFLINE`: Settings の Codex CLI path を確認し、ターミナルで `codex doctor` を実行します。macOSのGUI起動ではPATHが短いため、Codiconは `~/.local/bin/codex` と Homebrew の標準パスも検索します。
 - `NO GAMEPAD`: OSのゲームコントローラ設定で接続を確認し、一度ボタンを押します。標準マッピングでない機種はボタン番号をSettingsで調整します。
+- `INPUT OFFLINE`: SDL のコントローラ読み取りを開始できていません。ステータス表示にカーソルを合わせると理由が出ます。macOS では「入力監視」の許可を確認してください。
 - 音声エラー: OSのマイク権限、Codexへのサインイン、ネットワーク接続を確認します。`CODEX_SMOKE_VOICE=1 npm run smoke:codex` で音声セッションとPCM受信だけを確認できます。
 - Linuxの開発版が `chrome-sandbox` で停止: ElectronのLinux sandbox手順に従って開発バイナリの所有者・modeを設定します。配布ランチャーに `--no-sandbox` を埋め込まないでください。
 

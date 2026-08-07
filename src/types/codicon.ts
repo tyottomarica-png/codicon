@@ -22,10 +22,49 @@ export type CodiconSettings = {
   workspace: string;
   codexPath: string;
   controllerEnabled: boolean;
+  hudEnabled: boolean;
+  hudBounds: { x: number; y: number } | null;
+  quitOnWindowClose: boolean;
   deadzone: number;
   permissionMode: PermissionMode;
   modelSlots: ModelSlot[];
   bindings: ControllerBindings;
+};
+
+/** Semantic controller events produced by the main-process reader. */
+export type ControllerAction =
+  | { type: "wheel/open" }
+  | { type: "wheel/preview"; modelIndex: number | null; effortIndex: number | null }
+  | { type: "wheel/commit" }
+  | { type: "wheel/cancel" }
+  | { type: "primary" }
+  | { type: "cancel" }
+  | { type: "focusComposer" }
+  | { type: "newThread" }
+  | { type: "settings" }
+  | { type: "pushToTalk/start" }
+  | { type: "pushToTalk/stop" }
+  | { type: "fastToggle" };
+
+export type ControllerStatus = {
+  /** False when SDL could not start; the renderer then falls back to the focus-limited Web API. */
+  available: boolean;
+  reason: string;
+  connected: boolean;
+  id: string;
+  /** True once SDL was told to keep delivering input while Codicon is in the background. */
+  backgroundEvents: boolean;
+};
+
+export type HudState = {
+  connection: string;
+  model: string;
+  effort: string;
+  serviceTier: string | null;
+  busy: boolean;
+  voiceActive: boolean;
+  approvalPending: boolean;
+  controller: boolean;
 };
 
 export type ReasoningOption = {
@@ -101,6 +140,23 @@ export type CodiconApi = {
   voiceAudio(payload: { threadId: string; audio: AudioChunk }): Promise<Record<string, unknown>>;
   voiceStop(threadId: string): Promise<Record<string, unknown>>;
   onEvent(listener: (event: CodexEvent) => void): () => void;
+  controllerStatus(): Promise<ControllerStatus>;
+  setControllerContext(context: { modelCount: number; effortCount: number }): void;
+  onControllerActions(listener: (actions: ControllerAction[]) => void): () => void;
+  onControllerSnapshot(listener: (snapshot: GamepadSnapshot) => void): () => void;
+  onControllerStatus(listener: (status: ControllerStatus) => void): () => void;
+  publishHudState(patch: Partial<HudState>): void;
+  hudState(): Promise<HudState>;
+  setHudEnabled(enabled: boolean): Promise<boolean>;
+  onHudState(listener: (state: HudState) => void): () => void;
+  showMainWindow(): void;
+};
+
+export type GamepadSnapshot = {
+  connected: boolean;
+  id: string;
+  left: [number, number];
+  right: [number, number];
 };
 
 declare global {

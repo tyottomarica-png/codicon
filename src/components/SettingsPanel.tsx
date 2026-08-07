@@ -58,7 +58,13 @@ export function SettingsPanel({ open, settings, models, onClose, onChooseWorkspa
             </div>
           </section>
           <section className="settings-section">
-            <div className="settings-copy"><span>05 / RUNTIME</span><h3>Codex CLI</h3><p>空欄の場合はPATH上のcodexを使用します。変更は再起動後に反映されます。</p></div>
+            <div className="settings-copy"><span>05 / BACKGROUND</span><h3>Background operation</h3><p>コントローラ入力はメインプロセスで読み取るため、Codex や Claude Code を前面にしていても動作します。</p></div>
+            <div className="controller-toggle"><span>Status overlay</span><button className={draft.hudEnabled ? "is-active" : ""} onClick={() => setDraft({ ...draft, hudEnabled: !draft.hudEnabled })}>{draft.hudEnabled ? "ENABLED" : "DISABLED"}</button></div>
+            <div className="controller-toggle"><span>Close window quits Codicon</span><button className={draft.quitOnWindowClose ? "is-active" : ""} onClick={() => setDraft({ ...draft, quitOnWindowClose: !draft.quitOnWindowClose })}>{draft.quitOnWindowClose ? "QUIT" : "STAY RESIDENT"}</button></div>
+            <p className="settings-note">STAY RESIDENT ではウィンドウを閉じてもセッションは終了せず、メニューバーのアイコンから復帰できます。</p>
+          </section>
+          <section className="settings-section">
+            <div className="settings-copy"><span>06 / RUNTIME</span><h3>Codex CLI</h3><p>空欄の場合はPATH上のcodexを使用します。変更は再起動後に反映されます。</p></div>
             <input className="text-control" value={draft.codexPath} placeholder="codex" onChange={(event) => setDraft({ ...draft, codexPath: event.target.value })} />
           </section>
         </div>
